@@ -6,7 +6,11 @@ A local Xbox Live authentication and monitoring API for Home Assistant integrati
 
 XboxApi solves a key limitation with Home Assistant's built-in Xbox integration: **multi-user support**. The existing HA Xbox integration only allows monitoring a single Xbox profile, but if multiple family members use the same Xbox console, you can't see who's currently playing or get status for secondary users.
 
+You can run this API locally on a desktop, Raspberry Pi, or inside a Docker container — perfect for Home Assistant setups or headless environments. It's lightweight and designed to run 24/7 on your local network without exposing anything to the internet.
+
 This API provides **multi-user Xbox monitoring** by authenticating with multiple Xbox Live accounts and aggregating their gaming status. Host it locally on your network, and Home Assistant can poll the endpoints to display comprehensive Xbox information for your entire household.
+
+
 
 **Important:** This is a **monitoring/data retrieval API only** - it does not provide media player controls. It's designed to show you gaming activity, not control the Xbox.
 
@@ -27,6 +31,7 @@ This API provides **multi-user Xbox monitoring** by authenticating with multiple
 We're looking for contributors to help improve the project! In particular:
 
 - 🎨 **Front-End Overhaul**  
+
   The current web interface is very basic and not mobile-friendly. We’d love help with:
   - Responsive layout improvements  
   - Better styling and UI organization  
