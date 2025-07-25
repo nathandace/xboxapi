@@ -22,6 +22,9 @@ let config: AppConfig = {
     enableCoverArt: false
 };
 
+// Cache for cover art to prevent repeated API calls
+const coverArtCache = new Map<string, string | null>();
+
 async function loadConfig(): Promise<void> {
     try {
         const configData = await fs.readFile(path.join(__dirname, 'config.json'), 'utf8');
@@ -53,6 +56,10 @@ app.get('/api/users', async (req: Request, res: Response) => {
             try {
                 const tokens = auth.getTokens(username);
                 const isExpired = tokens ? Date.now() > tokens.expires_at : true;
+
+                // Calculate token age for refresh token estimation
+                const tokenAge = tokens ? Math.floor((Date.now() - tokens.timestamp) / (1000 * 60 * 60 * 24)) : 0;
+                const estimatedRefreshDaysLeft = Math.max(0, 90 - tokenAge);
 
                 // Try to get gamertag
                 let gamertag = username;
@@ -92,14 +99,20 @@ app.get('/api/users', async (req: Request, res: Response) => {
                     username,
                     gamertag,
                     status: isExpired ? 'expired' : 'authenticated',
-                    tokenExpiry: tokens ? new Date(tokens.expires_at).toISOString() : null
+                    tokenExpiry: tokens ? new Date(tokens.expires_at).toISOString() : null,
+                    tokenAge: tokenAge,
+                    estimatedRefreshDaysLeft: estimatedRefreshDaysLeft,
+                    authTimestamp: tokens ? new Date(tokens.timestamp).toISOString() : null
                 };
             } catch (error) {
                 return {
                     username,
                     gamertag: username,
                     status: 'error',
-                    tokenExpiry: null
+                    tokenExpiry: null,
+                    tokenAge: 0,
+                    estimatedRefreshDaysLeft: 0,
+                    authTimestamp: null
                 };
             }
         });
@@ -168,17 +181,26 @@ function cleanGameName(gameName: string): string {
 
 // Helper function to get game cover art from Giant Bomb API
 async function getGameCoverArt(gameName: string): Promise<string | null> {
-    // Check if cover art is enabled
+
     if (!config.enableCoverArt || !config.giantBombApiKey) {
         return null;
     }
 
+    const cleanedName = cleanGameName(gameName);
+
+    // Check cache first
+    if (coverArtCache.has(cleanedName)) {
+        const cached = coverArtCache.get(cleanedName);
+        console.log(`Using cached cover art result for "${cleanedName}": ${cached ? 'found' : 'not found'}`);
+        return typeof cached === 'undefined' ? null : cached;
+    }
+
     try {
-        const cleanedName = cleanGameName(gameName);
         console.log(`Searching for cover art for: "${cleanedName}"`);
 
         interface GiantBombSearchResult {
             image?: { original_url?: string };
+            name?: string;
             [key: string]: any;
         }
         interface GiantBombResponse {
@@ -196,47 +218,46 @@ async function getGameCoverArt(gameName: string): Promise<string | null> {
                     format: 'json',
                     query: cleanedName,
                     resources: 'game',
-                    limit: 1 // Only get the first result
+                    limit: 1
                 },
                 headers: {
                     'User-Agent': 'Xbox-Auth-API/1.0'
                 },
-                timeout: 5000 // 5 second timeout
+                timeout: 5000
             }
         );
 
-        // Check for API errors
-        if (response.data?.error || response.data?.status_code !== 1) {
-            console.warn(`Giant Bomb API error for "${cleanedName}": ${response.data?.error || 'Unknown error'}`);
+        // Giant Bomb API quirk: "error": "OK" actually means success!
+        if (response.data?.status_code !== 1) {
+            console.warn(`Giant Bomb API failed for "${cleanedName}": status_code=${response.data?.status_code}, error=${response.data?.error}`);
+            coverArtCache.set(cleanedName, null); // Cache the failure
             return null;
         }
 
         const results = response.data?.results;
-        if (results && results.length > 0 && results[0].image?.original_url) {
-            console.log(`Found cover art for "${cleanedName}": ${results[0].image.original_url}`);
-            return results[0].image.original_url;
+        if (results && results.length > 0) {
+            const game = results[0];
+            console.log(`Found game result: "${game.name || 'Unknown'}" for search "${cleanedName}"`);
+
+            if (game.image?.original_url) {
+                console.log(`Found cover art for "${cleanedName}": ${game.image.original_url}`);
+                coverArtCache.set(cleanedName, game.image.original_url); // Cache the success
+                return game.image.original_url;
+            } else {
+                console.log(`Game found but no image available for "${cleanedName}"`);
+                coverArtCache.set(cleanedName, null); // Cache the no-image result
+                return null;
+            }
         }
 
-        console.log(`No cover art found for "${cleanedName}"`);
+        console.log(`No games found for "${cleanedName}"`);
+        coverArtCache.set(cleanedName, null); // Cache the no-results
         return null;
 
     } catch (error) {
-        // Handle different types of errors gracefully
         const err = error as any;
-
-        if (err.code === 'ECONNABORTED') {
-            console.warn(`Giant Bomb API timeout for "${gameName}"`);
-        } else if (err.response) {
-            console.warn(`Giant Bomb API HTTP error ${err.response.status} for "${gameName}"`);
-        } else if (err.request) {
-            console.warn(`Giant Bomb API network error for "${gameName}"`);
-        } else if (err.message) {
-            console.warn(`Giant Bomb API request error for "${gameName}": ${err.message}`);
-        } else {
-            console.warn(`Unexpected error fetching cover art for "${gameName}":`, error);
-        }
-
-        // Always return null on error - never throw
+        console.warn(`Error fetching cover art for "${gameName}":`, err.message);
+        coverArtCache.set(cleanedName, null); // Cache the error
         return null;
     }
 }
@@ -619,6 +640,43 @@ app.get('/xbox/status-all', async (req: Request, res: Response) => {
 
 // Get current games being played and which users are playing them (simplified for Home Assistant)
 app.get('/xbox/status', async (req: Request, res: Response) => {
+    // Helper function to get token expiration info
+    function getTokenInfo(username: string) {
+        const tokens = auth.getTokens(username);
+
+        if (!tokens) {
+            return {
+                hasTokens: false,
+                status: 'no_tokens',
+                daysRemaining: 0
+            };
+        }
+
+        const now = Date.now();
+        const tokenAge = Math.floor((now - tokens.timestamp) / (1000 * 60 * 60 * 24));
+        const estimatedRefreshDaysLeft = Math.max(0, 90 - tokenAge);
+        const accessTokenExpired = now > tokens.expires_at;
+
+        let status = 'healthy';
+        if (estimatedRefreshDaysLeft <= 0) {
+            status = 'refresh_expired';
+        } else if (estimatedRefreshDaysLeft <= 7) {
+            status = 'refresh_expiring';
+        } else if (accessTokenExpired) {
+            status = 'access_expired';
+        }
+
+        return {
+            hasTokens: true,
+            status: status,
+            daysRemaining: estimatedRefreshDaysLeft,
+            tokenAge: tokenAge,
+            accessTokenExpired: accessTokenExpired,
+            accessTokenExpiry: new Date(tokens.expires_at).toISOString(),
+            authTimestamp: new Date(tokens.timestamp).toISOString()
+        };
+    }
+
     const authenticatedUsers = auth.getAuthenticatedUsers();
 
     if (authenticatedUsers.length === 0) {
@@ -768,7 +826,8 @@ app.get('/xbox/status', async (req: Request, res: Response) => {
             username: user.username,
             gamertag: user.gamertag,
             state: user.state,
-            xboxOnline: user.xboxOnline || false
+            xboxOnline: user.xboxOnline || false,
+            tokenInfo: getTokenInfo(user.username)
         });
 
         // Check if Xbox is online
@@ -790,7 +849,8 @@ app.get('/xbox/status', async (req: Request, res: Response) => {
                 usersInGame.push({
                     username: user.username,
                     gamertag: user.gamertag,
-                    activity: user.currentGame.activity
+                    activity: user.currentGame.activity,
+                    tokenInfo: getTokenInfo(user.username)
                 });
             }
         }
@@ -808,7 +868,8 @@ app.get('/xbox/status', async (req: Request, res: Response) => {
             usersInGame.push(...dashboardUsers.map(u => ({
                 username: u.username,
                 gamertag: u.gamertag,
-                activity: 'On Xbox Home'
+                activity: 'On Xbox Home',
+                tokenInfo: u.tokenInfo
             })));
         }
     }
@@ -830,6 +891,7 @@ app.get('/xbox/status', async (req: Request, res: Response) => {
         xboxStatus: xboxStatus, // 'on', 'off', or 'unknown'
         activeGame: activeGame, // null if no game/app active, includes coverArtUrl if found
         users: usersInGame, // users currently in the game/app
+        allUsers: allUsers, // all authenticated users with their token info
         timestamp: new Date().toISOString()
     });
 });

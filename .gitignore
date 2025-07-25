@@ -112,3 +112,4 @@ tests/
 # Backup files
 *.bak
 *.backup
+*.gz

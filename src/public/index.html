@@ -51,11 +51,11 @@
             loadUsers();
             loadXboxStatus();
 
-            // Auto-refresh every 30 seconds
-            setInterval(() => {
-                loadUsers();
-                loadXboxStatus();
-            }, 30000);
+            // Auto-refresh disabled to prevent repeated API calls
+            // setInterval(() => {
+            //     loadUsers();
+            //     loadXboxStatus();
+            // }, 30000);
         });
 
         async function loadUsers() {
@@ -87,11 +87,17 @@
                 return;
             }
 
-            userListElement.innerHTML = users.map(user => `
+            userListElement.innerHTML = users.map(user => {
+                const tokenInfo = getTokenAgeInfo(user);
+
+                return `
                 <div class="user-item">
                     <div class="user-info">
                         <div class="user-email">${user.username}</div>
                         <div class="user-gamertag">${user.gamertag || 'Loading...'}</div>
+                        <div class="user-token-age" style="font-size: 0.8rem; color: ${tokenInfo.color};">
+                            ${tokenInfo.text}
+                        </div>
                     </div>
                     <div class="user-status">
                         <div class="status-indicator ${getStatusClass(user.status)}"></div>
@@ -100,9 +106,70 @@
                     <div class="user-actions">
                         <button class="btn btn-success" onclick="refreshUser('${user.username}')">Refresh</button>
                         <button class="btn btn-danger" onclick="removeUser('${user.username}')">Remove</button>
+                        ${tokenInfo.needsReauth ? `<button class="btn" style="background: #ffc107; color: #000; margin-left: 5px;" onclick="reAuthenticateUser('${user.username}')">Re-auth</button>` : ''}
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
+        }
+
+        function getTokenAgeInfo(user) {
+            if (!user.tokenExpiry) {
+                return { text: 'Token info unavailable', color: '#666', needsReauth: false };
+            }
+
+            // Calculate days since authentication (assuming 90 day max)
+            const tokenDate = new Date(user.tokenExpiry);
+            const now = new Date();
+
+            // Estimate initial auth date (tokens typically last 1 hour, so we estimate based on that)
+            // This is an approximation - in a real system, you'd store the initial auth timestamp
+            const estimatedAuthAge = Math.floor((now.getTime() - tokenDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+            const daysRemaining = Math.max(0, 90 - estimatedAuthAge);
+
+            if (daysRemaining <= 0) {
+                return {
+                    text: 'Token expired - needs re-auth',
+                    color: '#dc3545',
+                    needsReauth: true
+                };
+            } else if (daysRemaining <= 7) {
+                return {
+                    text: `⚠️ ${daysRemaining} days remaining`,
+                    color: '#ffc107',
+                    needsReauth: true
+                };
+            } else if (daysRemaining <= 14) {
+                return {
+                    text: `${daysRemaining} days remaining`,
+                    color: '#fd7e14',
+                    needsReauth: false
+                };
+            } else {
+                return {
+                    text: `${daysRemaining} days remaining`,
+                    color: '#28a745',
+                    needsReauth: false
+                };
+            }
+        }
+
+        async function reAuthenticateUser(username) {
+            // Pre-fill the username and start auth process
+            document.getElementById('username').value = username;
+
+            // Remove the existing user first
+            try {
+                await fetch(`/api/users/${encodeURIComponent(username)}`, {
+                    method: 'DELETE'
+                });
+                loadUsers(); // Refresh the list
+            } catch (error) {
+                console.error('Error removing user:', error);
+            }
+
+            // Start fresh authentication
+            setTimeout(() => addUser(), 500); // Small delay to let the deletion process
         }
 
         function renderXboxStatus() {
