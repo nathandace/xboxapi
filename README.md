@@ -1,7 +1,6 @@
 # XboxApi
 
-A local Xbox Live authentication and monitoring API, originally built to allow for Home Assistant to get information that was otherwise not available in the Home Assistant XBox integration (multiple user profiles).
-
+A local Xbox Live authentication and monitoring API, originally built to allow for Home Assistant to get information that the XBox add-on was not providing, such as supporting multiple user accounts and game cover art.
 ## 🎮 Overview
 
 XboxApi solves a key limitation with Home Assistant's built-in Xbox integration: **multi-user support**. The existing HA Xbox integration only allows monitoring a single Xbox profile, but if multiple family members use the same Xbox console, you can't see who's currently playing or get status for secondary users.
