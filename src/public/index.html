@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xbox API Manager</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎮 Xbox API Manager</h1>
+            <p>Manage Xbox Live authentication and monitor gaming activity</p>
+        </div>
+
+        <div id="xboxStatus" class="card xbox-status-card" style="display: none;">
+            <h2>🎮 Current Xbox Status</h2>
+            <div id="xboxStatusContent"></div>
+        </div>
+
+        <div class="main-content">
+            <div class="card">
+                <h2>👤 Add New User</h2>
+                <div class="add-user-form">
+                    <div class="form-group">
+                        <label for="username">Email/Username:</label>
+                        <input type="email" id="username" placeholder="user@example.com" required>
+                    </div>
+                    <button class="btn btn-primary" onclick="addUser()">Add User</button>
+                </div>
+                <div id="addUserMessage"></div>
+            </div>
+
+            <div class="card">
+                <h2>👥 Authenticated Users</h2>
+                <div id="userList" class="user-list">
+                    <div class="loading">Loading users...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let users = [];
+        let xboxStatus = null;
+
+        // Load users and Xbox status on page load
+        document.addEventListener('DOMContentLoaded', function () {
+            loadUsers();
+            loadXboxStatus();
+
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                loadUsers();
+                loadXboxStatus();
+            }, 30000);
+        });
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/api/users');
+                users = await response.json();
+                renderUsers();
+            } catch (error) {
+                console.error('Error loading users:', error);
+                document.getElementById('userList').innerHTML = '<div class="error">Error loading users</div>';
+            }
+        }
+
+        async function loadXboxStatus() {
+            try {
+                const response = await fetch('/xbox/games-active');
+                xboxStatus = await response.json();
+                renderXboxStatus();
+            } catch (error) {
+                console.error('Error loading Xbox status:', error);
+            }
+        }
+
+        function renderUsers() {
+            const userListElement = document.getElementById('userList');
+
+            if (users.length === 0) {
+                userListElement.innerHTML = '<div class="loading">No users authenticated yet</div>';
+                return;
+            }
+
+            userListElement.innerHTML = users.map(user => `
+                <div class="user-item">
+                    <div class="user-info">
+                        <div class="user-email">${user.username}</div>
+                        <div class="user-gamertag">${user.gamertag || 'Loading...'}</div>
+                    </div>
+                    <div class="user-status">
+                        <div class="status-indicator ${getStatusClass(user.status)}"></div>
+                        <span>${getStatusText(user.status)}</span>
+                    </div>
+                    <div class="user-actions">
+                        <button class="btn btn-success" onclick="refreshUser('${user.username}')">Refresh</button>
+                        <button class="btn btn-danger" onclick="removeUser('${user.username}')">Remove</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderXboxStatus() {
+            const statusElement = document.getElementById('xboxStatus');
+            const contentElement = document.getElementById('xboxStatusContent');
+
+            if (!xboxStatus || !xboxStatus.success) {
+                statusElement.style.display = 'none';
+                return;
+            }
+
+            statusElement.style.display = 'block';
+
+            const status = xboxStatus.xboxStatus;
+            const game = xboxStatus.activeGame;
+            const users = xboxStatus.users || [];
+
+            let content = `<div class="xbox-status">Xbox is ${status.toUpperCase()}</div>`;
+
+            if (game && status === 'on') {
+                content += `
+                    <div class="game-info">
+                        ${game.coverArtUrl ? `<img src="${game.coverArtUrl}" alt="${game.name}" class="game-cover">` : ''}
+                        <div class="game-details">
+                            <h3>${game.name}</h3>
+                            <p>${game.activity}</p>
+                        </div>
+                    </div>
+                `;
+
+                if (users.length > 0) {
+                    content += `
+                        <div class="players-list">
+                            ${users.map(user => `<span class="player-tag">${user.gamertag}</span>`).join('')}
+                        </div>
+                    `;
+                }
+            }
+
+            contentElement.innerHTML = content;
+        }
+
+        function getStatusClass(status) {
+            switch (status) {
+                case 'authenticated': return 'status-authenticated';
+                case 'expired': return 'status-expired';
+                default: return 'status-error';
+            }
+        }
+
+        function getStatusText(status) {
+            switch (status) {
+                case 'authenticated': return 'Active';
+                case 'expired': return 'Expired';
+                default: return 'Error';
+            }
+        }
+
+        async function addUser() {
+            const username = document.getElementById('username').value.trim();
+            const messageElement = document.getElementById('addUserMessage');
+
+            if (!username) {
+                messageElement.innerHTML = '<div class="error">Please enter a valid email/username</div>';
+                return;
+            }
+
+            try {
+                messageElement.innerHTML = '<div class="loading">Initiating authentication...</div>';
+
+                const response = await fetch(`/auth/url/${encodeURIComponent(username)}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    // Open authentication window
+                    const authWindow = window.open(data.authUrl, 'xboxauth', 'width=500,height=600');
+
+                    messageElement.innerHTML = `
+                        <div class="success">
+                            <p>Authentication window opened. Please:</p>
+                            <ol style="text-align: left; margin: 10px 0;">
+                                <li>Sign in with your Microsoft account</li>
+                                <li>Copy the <strong>code</strong> parameter from the final redirect URL</li>
+                                <li>Paste it in the box below</li>
+                            </ol>
+                            <div style="margin-top: 15px;">
+                                <input type="text" id="authCode" placeholder="Paste authorization code here" style="width: 100%; padding: 8px; margin-bottom: 10px; border: 2px solid #ddd; border-radius: 4px;">
+                                <button class="btn btn-primary" onclick="submitAuthCode('${username}')">Complete Authentication</button>
+                            </div>
+                        </div>
+                    `;
+
+                } else {
+                    messageElement.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                messageElement.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function submitAuthCode(username) {
+            const code = document.getElementById('authCode').value.trim();
+            const messageElement = document.getElementById('addUserMessage');
+
+            if (!code) {
+                messageElement.innerHTML += '<div class="error" style="margin-top: 10px;">Please enter the authorization code</div>';
+                return;
+            }
+
+            completeAuthentication(username, code);
+        }
+
+        async function completeAuthentication(username, code) {
+            const messageElement = document.getElementById('addUserMessage');
+
+            try {
+                messageElement.innerHTML = '<div class="loading">Completing authentication...</div>';
+
+                const response = await fetch(`/auth/callback/${encodeURIComponent(username)}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ code })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    messageElement.innerHTML = `<div class="success">✅ Successfully authenticated ${username}!</div>`;
+                    document.getElementById('username').value = '';
+                    setTimeout(() => {
+                        messageElement.innerHTML = '';
+                        loadUsers();
+                    }, 3000);
+                } else {
+                    messageElement.innerHTML = `<div class="error">Authentication failed: ${data.error}</div>`;
+                }
+            } catch (error) {
+                messageElement.innerHTML = `<div class="error">Error completing authentication: ${error.message}</div>`;
+            }
+        }
+
+        async function removeUser(username) {
+            if (!confirm(`Are you sure you want to remove ${username}?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/users/${encodeURIComponent(username)}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    loadUsers();
+                } else {
+                    alert('Error removing user');
+                }
+            } catch (error) {
+                alert('Error removing user');
+            }
+        }
+
+        async function refreshUser(username) {
+            try {
+                const response = await fetch(`/auth/refresh/${encodeURIComponent(username)}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    loadUsers();
+                } else {
+                    alert('Error refreshing user tokens');
+                }
+            } catch (error) {
+                alert('Error refreshing user tokens');
+            }
+        }
+
+        // Manual fallback function
+        async function addUserManual() {
+            const username = document.getElementById('username').value.trim();
+            const messageElement = document.getElementById('addUserMessage');
+
+            if (!username) {
+                messageElement.innerHTML = '<div class="error">Please enter a valid email/username</div>';
+                return;
+            }
+
+            const code = prompt('Please paste the authorization code from the redirect URL:');
+            if (code && code.trim()) {
+                completeAuthentication(username, code.trim());
+            }
+        }
+    </script>
+</body>
+
+</html>
