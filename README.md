@@ -1,6 +1,6 @@
 # XboxApi
 
-A local Xbox Live authentication and monitoring API for Home Assistant integration.
+A local Xbox Live authentication and monitoring API, originally built to allow for Home Assistant to get information that was otherwise not available in the Home Assistant XBox integration (multiple user profiles).
 
 ## 🎮 Overview
 
