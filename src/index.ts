@@ -618,7 +618,7 @@ app.get('/xbox/status-all', async (req: Request, res: Response) => {
 });
 
 // Get current games being played and which users are playing them (simplified for Home Assistant)
-app.get('/xbox/games-active', async (req: Request, res: Response) => {
+app.get('/xbox/status', async (req: Request, res: Response) => {
     const authenticatedUsers = auth.getAuthenticatedUsers();
 
     if (authenticatedUsers.length === 0) {
@@ -963,7 +963,6 @@ app.listen(PORT, async () => {
 
     console.log(`\n🌐 Web Interface: http://localhost:${PORT}`);
     console.log(`📊 Health Check: http://localhost:${PORT}/health`);
-    console.log(`🎮 Xbox Status: http://localhost:${PORT}/xbox/games-active`);
 
     console.log(`\nTo authenticate users:`);
     console.log(`1. Open http://localhost:${PORT} in your browser`);
@@ -971,7 +970,7 @@ app.listen(PORT, async () => {
     console.log(`3. Complete Xbox Live sign-in in the popup window`);
 
     console.log(`\nAPI Endpoints:`);
-    console.log(`GET http://localhost:${PORT}/xbox/games-active - See all active games`);
+    console.log(`GET http://localhost:${PORT}/xbox/status - See XBox status and active games`);
     console.log(`GET http://localhost:${PORT}/xbox/profile/{username} - Get user profile`);
 
     if (config.enableCoverArt) {

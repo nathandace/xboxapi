@@ -13,6 +13,7 @@ This API provides **multi-user Xbox monitoring** by authenticating with multiple
 ## ✨ Features
 
 - 🎮 **Multi-user Xbox Live authentication** - No Azure registration required
+- 🧭 **Web-based login dashboard** - Web UI for authenticating and managing multiple Xbox users
 - 🏠 **Xbox status detection** - On/Off/Dashboard states for Home Assistant
 - 🎯 **Active game monitoring** - Real-time detection of what games are being played
 - 👥 **Split-screen gaming support** - Identifies multiple users playing the same game
@@ -20,6 +21,22 @@ This API provides **multi-user Xbox monitoring** by authenticating with multiple
 - 🔄 **Automatic token refresh** - Hands-off authentication management
 - 💾 **Persistent storage** - Tokens survive server restarts
 - 🛡️ **Local-only operation** - Secure, no external dependencies beyond Xbox Live
+
+## 🆘 Help Wanted
+
+We're looking for contributors to help improve the project! In particular:
+
+- 🎨 **Front-End Overhaul**  
+  The current web interface is very basic and not mobile-friendly. We’d love help with:
+  - Responsive layout improvements  
+  - Better styling and UI organization  
+  - A polished status dashboard to display Xbox activity cleanly
+
+- 🔐 **Improved Authentication UX**  
+  Right now, users must manually copy a `code` from a redirected URL and paste it back into a POST request. Ideas for improving this flow—like auto-handling redirects or using a local callback page—would be awesome.
+
+- 📊 **Dashboard Enhancements**  
+  There's potential for a visual, user-friendly front-end that mirrors current Xbox activity and user status. Think: mini control center for who's online, what they're playing, with artwork and activity history.
 
 ## 🚀 Quick Start
 
@@ -32,29 +49,34 @@ This API provides **multi-user Xbox monitoring** by authenticating with multiple
 ### Installation
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/yourusername/XboxApi.git
    cd XboxApi
    ```
 
 2. **Install dependencies**
+
    ```bash
    npm install
    ```
 
 3. **Configure the API (optional)**
+
    ```bash
    cp config.example.json config.json
    # Edit config.json to add your Giant Bomb API key for cover art
    ```
 
 4. **Build and start**
+
    ```bash
    npm run build
    npm start
    ```
 
    Or for development:
+
    ```bash
    npm run dev
    ```
@@ -66,16 +88,30 @@ This API provides **multi-user Xbox monitoring** by authenticating with multiple
 ## 🔐 Authentication Setup
 
 ### Step 1: Initiate Authentication
+
+### ✅ Option 1: Use the Web UI (Recommended)
+
+1. Start the server:  
+
+   ```bash
+   npm start
+2. Open browser to <http://localhost:3000>
+3. Use dashboard for authenticating to add user accounts.
+
+### ✅ Option 2: Use API Calls
+
 ```bash
 curl http://localhost:3000/auth/url/your-email@example.com
 ```
 
 ### Step 2: Complete Xbox Live Sign-in
+
 1. Visit the `authUrl` returned from step 1 in your browser
 2. Sign in with your Microsoft account
 3. You'll be redirected to a page with a `code` parameter in the URL
 
 ### Step 3: Complete Authentication
+
 ```bash
 curl -X POST http://localhost:3000/auth/callback/your-email@example.com \
   -H "Content-Type: application/json" \
@@ -83,17 +119,21 @@ curl -X POST http://localhost:3000/auth/callback/your-email@example.com \
 ```
 
 ### Repeat for Multiple Users
+
 Authenticate each Xbox Live account you want to monitor by repeating the above steps.
 
 ## 📊 API Endpoints
 
 ### Xbox Gaming Status
+
 ```bash
-GET /xbox/games-active
+GET /xbox/status
 ```
+
 **Perfect for Home Assistant polling**
 
 Example response:
+
 ```json
 {
   "success": true,
@@ -121,6 +161,7 @@ Example response:
 ```
 
 ### Individual User Endpoints
+
 - `GET /xbox/profile/{username}` - User Xbox profile
 - `GET /xbox/presence/{username}` - User online presence
 - `GET /xbox/friends/{username}` - User's friends list
@@ -128,6 +169,7 @@ Example response:
 - `GET /xbox/status/{username}` - Comprehensive user status
 
 ### Authentication Management
+
 - `GET /auth/tokens/{username}` - Check token status
 - `POST /auth/refresh/{username}` - Manually refresh tokens
 - `GET /auth/header/{username}` - Get Xbox API authorization header
@@ -140,7 +182,7 @@ Add to your `configuration.yaml`:
 
 ```yaml
 rest:
-  - resource: "http://localhost:3000/xbox/games-active"
+  - resource: "http://localhost:3000/xbox/status"
     scan_interval: 30
     sensor:
       - name: "Xbox Status"
@@ -171,6 +213,7 @@ cards:
 ## ⚙️ Configuration
 
 ### Optional Cover Art (config.json)
+
 ```json
 {
   "giantBombApiKey": "your-giant-bomb-api-key",
@@ -179,6 +222,7 @@ cards:
 ```
 
 To enable cover art:
+
 1. Get a free API key from [Giant Bomb](https://www.giantbomb.com/api/)
 2. Add it to `config.json`
 3. Restart the server
@@ -197,11 +241,13 @@ src/
 ## 🔧 Development
 
 ### Scripts
+
 - `npm run build` - Compile TypeScript
 - `npm run dev` - Development mode with auto-reload
 - `npm start` - Start production server
 
 ### TypeScript Compilation
+
 ```bash
 # Watch mode for development
 npm run dev:build
@@ -222,18 +268,22 @@ npm run build
 ### Common Issues
 
 **Xbox shows "off" when it should be "on":**
+
 - Check that users are properly authenticated
 - Verify Xbox accounts are signed in on the console
 
 **Cover art not loading:**
+
 - Ensure Giant Bomb API key is configured in `config.json`
 - Check server logs for API errors
 
 **Authentication failing:**
+
 - Clear browser cookies and retry authentication
 - Check that redirect URL code is copied correctly
 
 ### Debug Mode
+
 Enable detailed logging by checking server console output during API calls.
 
 ## 🤝 Contributing

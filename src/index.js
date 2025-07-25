@@ -564,7 +564,7 @@ app.get('/xbox/status-all', (req, res) => __awaiter(void 0, void 0, void 0, func
     });
 }));
 // Get current games being played and which users are playing them (simplified for Home Assistant)
-app.get('/xbox/games-active', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+app.get('/xbox/status', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const authenticatedUsers = auth.getAuthenticatedUsers();
     if (authenticatedUsers.length === 0) {
         return res.json({
@@ -855,13 +855,12 @@ app.listen(PORT, () => __awaiter(void 0, void 0, void 0, function* () {
     yield initializeServer();
     console.log(`\n🌐 Web Interface: http://localhost:${PORT}`);
     console.log(`📊 Health Check: http://localhost:${PORT}/health`);
-    console.log(`🎮 Xbox Status: http://localhost:${PORT}/xbox/games-active`);
     console.log(`\nTo authenticate users:`);
     console.log(`1. Open http://localhost:${PORT} in your browser`);
     console.log(`2. Click "Add User" and enter email/username`);
     console.log(`3. Complete Xbox Live sign-in in the popup window`);
     console.log(`\nAPI Endpoints:`);
-    console.log(`GET http://localhost:${PORT}/xbox/games-active - See all active games`);
+    console.log(`GET http://localhost:${PORT}/xbox/status- See XBox status and active games`);
     console.log(`GET http://localhost:${PORT}/xbox/profile/{username} - Get user profile`);
     if (config.enableCoverArt) {
         console.log(`\n🎨 Cover art enabled via Giant Bomb API`);
