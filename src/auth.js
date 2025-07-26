@@ -250,20 +250,42 @@ function refreshTokens(username) {
         if (!tokens || !tokens.refresh_token) {
             throw new Error('No refresh token available for user');
         }
-        const tokenResponse = yield axios_1.default.post(config.tokenEndpoint, new URLSearchParams({
-            grant_type: 'refresh_token',
-            client_id: config.clientId,
-            refresh_token: tokens.refresh_token
-        }), {
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-        });
-        const { access_token, refresh_token, expires_in } = tokenResponse.data;
-        // Update stored tokens (keep existing gamertag)
-        const updatedTokens = Object.assign(Object.assign({}, tokens), { access_token, refresh_token: refresh_token || tokens.refresh_token, expires_in, expires_at: Date.now() + (expires_in * 1000) });
-        yield storeTokens(username, updatedTokens);
-        return updatedTokens;
+        console.log(`Attempting to refresh tokens for ${username}...`);
+        try {
+            const tokenResponse = yield axios_1.default.post(config.tokenEndpoint, new URLSearchParams({
+                grant_type: 'refresh_token',
+                client_id: config.clientId,
+                refresh_token: tokens.refresh_token
+            }), {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                timeout: 10000 // 10 second timeout
+            });
+            const { access_token, refresh_token, expires_in } = tokenResponse.data;
+            // IMPORTANT: Get fresh Xbox Live tokens with the new access token
+            const { xblToken, xstsToken, userHash, gamertag } = yield getXboxTokensWithGamertag(access_token);
+            // Update stored tokens with fresh Xbox tokens
+            const updatedTokens = {
+                access_token,
+                refresh_token: refresh_token || tokens.refresh_token,
+                expires_in,
+                expires_at: Date.now() + (expires_in * 1000),
+                xbl_token: xblToken, // Fresh XBL token
+                xsts_token: xstsToken, // Fresh XSTS token
+                user_hash: userHash, // Fresh user hash
+                gamertag: gamertag || tokens.gamertag || username, // Preserve or update gamertag
+                timestamp: Date.now(),
+                username: tokens.username
+            };
+            yield storeTokens(username, updatedTokens);
+            console.log(`Successfully refreshed all tokens for ${username}`);
+            return updatedTokens;
+        }
+        catch (error) {
+            console.error(`Token refresh failed for ${username}:`, error);
+            throw error;
+        }
     });
 }
 // Get tokens for a user

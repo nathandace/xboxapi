@@ -161,7 +161,7 @@ export async function getXboxTokensWithGamertag(accessToken: string): Promise<{
                     }
                 );
 
-                const profileData = profileResponse.data as { profileUsers?: { settings: { id: string; value: string }[] }[] };
+                const profileData = profileResponse.data as { profileUsers?: { settings?: { id: string; value: string }[] }[] };
                 if (profileData?.profileUsers?.[0]?.settings) {
                     const gamertagSetting = profileData.profileUsers[0].settings.find((s: any) =>
                         s.id === 'ModernGamertag' || s.id === 'Gamertag'
@@ -270,34 +270,52 @@ export async function refreshTokens(username: string): Promise<TokenData> {
         throw new Error('No refresh token available for user');
     }
 
-    const tokenResponse = await axios.post<{ access_token: string; refresh_token: string; expires_in: number }>(
-        config.tokenEndpoint,
-        new URLSearchParams({
-            grant_type: 'refresh_token',
-            client_id: config.clientId,
-            refresh_token: tokens.refresh_token
-        }),
-        {
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
+    console.log(`Attempting to refresh tokens for ${username}...`);
+
+    try {
+        const tokenResponse = await axios.post<{ access_token: string; refresh_token: string; expires_in: number }>(
+            config.tokenEndpoint,
+            new URLSearchParams({
+                grant_type: 'refresh_token',
+                client_id: config.clientId,
+                refresh_token: tokens.refresh_token
+            }),
+            {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                timeout: 10000 // 10 second timeout
             }
-        }
-    );
+        );
 
-    const { access_token, refresh_token, expires_in } = tokenResponse.data;
+        const { access_token, refresh_token, expires_in } = tokenResponse.data;
 
-    // Update stored tokens (keep existing gamertag)
-    const updatedTokens = {
-        ...tokens,
-        access_token,
-        refresh_token: refresh_token || tokens.refresh_token,
-        expires_in,
-        expires_at: Date.now() + (expires_in * 1000)
-    };
+        // IMPORTANT: Get fresh Xbox Live tokens with the new access token
+        const { xblToken, xstsToken, userHash, gamertag } = await getXboxTokensWithGamertag(access_token);
 
-    await storeTokens(username, updatedTokens);
+        // Update stored tokens with fresh Xbox tokens
+        const updatedTokens = {
+            access_token,
+            refresh_token: refresh_token || tokens.refresh_token,
+            expires_in,
+            expires_at: Date.now() + (expires_in * 1000),
+            xbl_token: xblToken,      // Fresh XBL token
+            xsts_token: xstsToken,    // Fresh XSTS token
+            user_hash: userHash,      // Fresh user hash
+            gamertag: gamertag || tokens.gamertag || username, // Preserve or update gamertag
+            timestamp: Date.now(),
+            username: tokens.username
+        };
 
-    return updatedTokens;
+        await storeTokens(username, updatedTokens);
+        console.log(`Successfully refreshed all tokens for ${username}`);
+
+        return updatedTokens;
+
+    } catch (error) {
+        console.error(`Token refresh failed for ${username}:`, error);
+        throw error;
+    }
 }
 
 // Get tokens for a user

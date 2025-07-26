@@ -90,39 +90,14 @@ app.get('/api/users', (req, res) => __awaiter(void 0, void 0, void 0, function* 
     try {
         const authenticatedUsers = auth.getAuthenticatedUsers();
         const userPromises = authenticatedUsers.map((username) => __awaiter(void 0, void 0, void 0, function* () {
-            var _a;
             try {
                 const tokens = auth.getTokens(username);
                 const isExpired = tokens ? Date.now() > tokens.expires_at : true;
                 // Calculate token age for refresh token estimation
                 const tokenAge = tokens ? Math.floor((Date.now() - tokens.timestamp) / (1000 * 60 * 60 * 24)) : 0;
                 const estimatedRefreshDaysLeft = Math.max(0, 90 - tokenAge);
-                // Try to get gamertag
-                let gamertag = username;
-                if (tokens && !isExpired) {
-                    try {
-                        const authorization = auth.getAuthorizationHeader(username);
-                        const profileResponse = yield axios_1.default.get(`https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,ModernGamertag`, {
-                            headers: {
-                                'Authorization': authorization,
-                                'x-xbl-contract-version': '3',
-                                'Accept': 'application/json'
-                            },
-                            timeout: 3000
-                        });
-                        const profileData = profileResponse.data;
-                        if (profileData &&
-                            typeof profileData === 'object' &&
-                            Array.isArray(profileData.profileUsers) &&
-                            profileData.profileUsers[0] &&
-                            Array.isArray(profileData.profileUsers[0].settings)) {
-                            gamertag = ((_a = profileData.profileUsers[0].settings.find((s) => s.id === 'ModernGamertag' || s.id === 'Gamertag')) === null || _a === void 0 ? void 0 : _a.value) || username;
-                        }
-                    }
-                    catch (error) {
-                        // Ignore errors when fetching gamertag
-                    }
-                }
+                // Get stored gamertag (no API call needed!)
+                const gamertag = auth.getStoredGamertag(username) || username;
                 return {
                     username,
                     gamertag,
@@ -618,6 +593,8 @@ app.get('/xbox/status', (req, res) => __awaiter(void 0, void 0, void 0, function
                 timeout: 5000
             });
             const presenceData = presenceResponse.data;
+            // Add debug logging to see what's happening after Xbox restart
+            console.log(`Raw presence data for ${username}:`, JSON.stringify(presenceData, null, 2));
             const devices = (presenceData === null || presenceData === void 0 ? void 0 : presenceData.devices) || [];
             // Find Xbox device with active game
             for (const device of devices) {
@@ -707,52 +684,31 @@ app.get('/xbox/game/:gameId/players', (req, res) => __awaiter(void 0, void 0, vo
         });
     }
     const userPresencePromises = authenticatedUsers.map((username) => __awaiter(void 0, void 0, void 0, function* () {
-        var _a;
         try {
             const authorization = yield getAuthorizationHeader(username);
-            const [profileResponse, presenceResponse] = yield Promise.allSettled([
-                axios_1.default.get(`https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,ModernGamertag,ModernGamertagSuffix,UniqueModernGamertag`, {
-                    headers: {
-                        'Authorization': authorization,
-                        'x-xbl-contract-version': '3',
-                        'Accept': 'application/json'
-                    }
-                }),
-                axios_1.default.get(`https://userpresence.xboxlive.com/users/me?level=all`, {
-                    headers: {
-                        'Authorization': authorization,
-                        'x-xbl-contract-version': '3',
-                        'Accept': 'application/json'
-                    }
-                })
-            ]);
-            let gamertag = username;
-            if (profileResponse.status === 'fulfilled') {
-                const profileData = profileResponse.value.data;
-                if (profileData &&
-                    typeof profileData === 'object' &&
-                    Array.isArray(profileData.profileUsers) &&
-                    profileData.profileUsers[0] &&
-                    Array.isArray(profileData.profileUsers[0].settings)) {
-                    gamertag = ((_a = profileData.profileUsers[0].settings.find((s) => s.id === 'ModernGamertag' || s.id === 'Gamertag')) === null || _a === void 0 ? void 0 : _a.value) || username;
+            // Use stored gamertag instead of profile API call
+            const gamertag = auth.getStoredGamertag(username) || username;
+            const presenceResponse = yield axios_1.default.get(`https://userpresence.xboxlive.com/users/me?level=all`, {
+                headers: {
+                    'Authorization': authorization,
+                    'x-xbl-contract-version': '3',
+                    'Accept': 'application/json'
                 }
-            }
-            if (presenceResponse.status === 'fulfilled') {
-                const presenceData = presenceResponse.value.data;
-                const devices = (presenceData === null || presenceData === void 0 ? void 0 : presenceData.devices) || [];
-                for (const device of devices) {
-                    const titles = (device === null || device === void 0 ? void 0 : device.titles) || [];
-                    for (const title of titles) {
-                        if ((title === null || title === void 0 ? void 0 : title.id) === gameId && (title === null || title === void 0 ? void 0 : title.placement) === 'Full' && (title === null || title === void 0 ? void 0 : title.state) === 'Active') {
-                            return {
-                                username,
-                                gamertag,
-                                activity: title.activity,
-                                device: device.type,
-                                state: title.state,
-                                gameName: title.name
-                            };
-                        }
+            });
+            const presenceData = presenceResponse.data;
+            const devices = (presenceData === null || presenceData === void 0 ? void 0 : presenceData.devices) || [];
+            for (const device of devices) {
+                const titles = (device === null || device === void 0 ? void 0 : device.titles) || [];
+                for (const title of titles) {
+                    if ((title === null || title === void 0 ? void 0 : title.id) === gameId && (title === null || title === void 0 ? void 0 : title.placement) === 'Full' && (title === null || title === void 0 ? void 0 : title.state) === 'Active') {
+                        return {
+                            username,
+                            gamertag,
+                            activity: title.activity,
+                            device: device.type,
+                            state: title.state,
+                            gameName: title.name
+                        };
                     }
                 }
             }
