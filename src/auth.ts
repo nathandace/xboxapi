@@ -12,6 +12,7 @@ export interface TokenData {
     xbl_token: string;
     xsts_token: string;
     user_hash: string;
+    gamertag?: string; // Added gamertag storage
     timestamp: number;
     username: string;
 }
@@ -77,8 +78,13 @@ export async function loadTokens(): Promise<void> {
     }
 }
 
-// Exchange Microsoft token for Xbox tokens
-export async function getXboxTokens(accessToken: string): Promise<{ xblToken: string; xstsToken: string; userHash: string }> {
+// Enhanced Xbox token exchange with gamertag capture
+export async function getXboxTokensWithGamertag(accessToken: string): Promise<{
+    xblToken: string;
+    xstsToken: string;
+    userHash: string;
+    gamertag?: string
+}> {
     try {
         // Authenticate with Xbox Live - note the RpsTicket format for modern endpoint
         const xblResponse = await axios.post(
@@ -102,10 +108,13 @@ export async function getXboxTokens(accessToken: string): Promise<{ xblToken: st
 
         const xblData = xblResponse.data as {
             Token: string;
-            DisplayClaims: { xui: { uhs: string }[] };
+            DisplayClaims: { xui: { uhs: string; gtg?: string }[] };
         };
         const xblToken = xblData.Token;
         const userHash = xblData.DisplayClaims.xui[0].uhs;
+
+        // Try to extract gamertag from XBL response (sometimes included)
+        let gamertag = xblData.DisplayClaims.xui[0].gtg;
 
         // Get XSTS token
         const xstsResponse = await axios.post(
@@ -126,10 +135,47 @@ export async function getXboxTokens(accessToken: string): Promise<{ xblToken: st
             }
         );
 
-        const xstsData = xstsResponse.data as { Token: string };
+        const xstsData = xstsResponse.data as {
+            Token: string;
+            DisplayClaims?: { xui?: { gtg?: string }[] };
+        };
         const xstsToken = xstsData.Token;
 
-        return { xblToken, xstsToken, userHash };
+        // Try to get gamertag from XSTS response if not found in XBL
+        if (!gamertag && xstsData.DisplayClaims?.xui?.[0]?.gtg) {
+            gamertag = xstsData.DisplayClaims.xui[0].gtg;
+        }
+
+        // If we still don't have gamertag, try one quick profile call
+        if (!gamertag) {
+            try {
+                const profileResponse = await axios.get(
+                    'https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,ModernGamertag',
+                    {
+                        headers: {
+                            'Authorization': `XBL3.0 x=${userHash};${xstsToken}`,
+                            'x-xbl-contract-version': '3',
+                            'Accept': 'application/json'
+                        },
+                        timeout: 5000
+                    }
+                );
+
+                const profileData = profileResponse.data as { profileUsers?: { settings: { id: string; value: string }[] }[] };
+                if (profileData?.profileUsers?.[0]?.settings) {
+                    const gamertagSetting = profileData.profileUsers[0].settings.find((s: any) =>
+                        s.id === 'ModernGamertag' || s.id === 'Gamertag'
+                    );
+                    if (gamertagSetting?.value) {
+                        gamertag = gamertagSetting.value;
+                    }
+                }
+            } catch (profileError) {
+                console.warn('Could not fetch gamertag during auth, will use username as fallback');
+            }
+        }
+
+        return { xblToken, xstsToken, userHash, gamertag };
     } catch (error) {
         const err = error as any;
         console.error('Xbox token exchange error:', err.response?.data || err.message);
@@ -192,10 +238,10 @@ export async function exchangeCodeForTokens(code: string, username: string): Pro
 
     const { access_token, refresh_token, expires_in } = tokenResponse.data;
 
-    // Get Xbox tokens
-    const { xblToken, xstsToken, userHash } = await getXboxTokens(access_token);
+    // Get Xbox tokens AND gamertag
+    const { xblToken, xstsToken, userHash, gamertag } = await getXboxTokensWithGamertag(access_token);
 
-    // Store all tokens
+    // Store all tokens including gamertag
     const tokens = {
         access_token,
         refresh_token,
@@ -203,7 +249,8 @@ export async function exchangeCodeForTokens(code: string, username: string): Pro
         expires_at: Date.now() + (expires_in * 1000),
         xbl_token: xblToken,
         xsts_token: xstsToken,
-        user_hash: userHash
+        user_hash: userHash,
+        gamertag: gamertag || username // Fallback to username if gamertag not found
     };
 
     await storeTokens(username, tokens);
@@ -239,7 +286,7 @@ export async function refreshTokens(username: string): Promise<TokenData> {
 
     const { access_token, refresh_token, expires_in } = tokenResponse.data;
 
-    // Update stored tokens
+    // Update stored tokens (keep existing gamertag)
     const updatedTokens = {
         ...tokens,
         access_token,
@@ -271,6 +318,12 @@ export function getAuthorizationHeader(username: string): string {
     }
 
     return `XBL3.0 x=${tokens.user_hash};${tokens.xsts_token}`;
+}
+
+// Get stored gamertag for a user (NEW FUNCTION)
+export function getStoredGamertag(username: string): string | undefined {
+    const tokens = tokenStorage.get(username);
+    return tokens?.gamertag;
 }
 
 // Get all authenticated users
@@ -305,7 +358,7 @@ export function validateState(state: string): string | null {
 
 // Store tokens directly (for direct token flow)
 export async function storeDirectTokens(username: string, access_token: string, refresh_token?: string, expires_in?: number): Promise<TokenData> {
-    const { xblToken, xstsToken, userHash } = await getXboxTokens(access_token);
+    const { xblToken, xstsToken, userHash, gamertag } = await getXboxTokensWithGamertag(access_token);
 
     const tokens = {
         access_token,
@@ -314,7 +367,8 @@ export async function storeDirectTokens(username: string, access_token: string, 
         expires_at: Date.now() + ((expires_in || 86400) * 1000),
         xbl_token: xblToken,
         xsts_token: xstsToken,
-        user_hash: userHash
+        user_hash: userHash,
+        gamertag: gamertag || username // Fallback to username if gamertag not found
     };
 
     await storeTokens(username, tokens);

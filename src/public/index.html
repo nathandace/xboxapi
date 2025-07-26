@@ -38,6 +38,10 @@
                 <div id="userList" class="user-list">
                     <div class="loading">Loading users...</div>
                 </div>
+                <div class="card-footer">
+                    <button class="btn btn-secondary" onclick="loadUsers()">🔄 Refresh Users</button>
+                    <button class="btn btn-secondary" onclick="loadXboxStatus()">🎮 Refresh Xbox Status</button>
+                </div>
             </div>
         </div>
     </div>
@@ -50,12 +54,6 @@
         document.addEventListener('DOMContentLoaded', function () {
             loadUsers();
             loadXboxStatus();
-
-            // Auto-refresh disabled to prevent repeated API calls
-            // setInterval(() => {
-            //     loadUsers();
-            //     loadXboxStatus();
-            // }, 30000);
         });
 
         async function loadUsers() {
@@ -71,11 +69,14 @@
 
         async function loadXboxStatus() {
             try {
-                const response = await fetch('/xbox/games-active');
+                const response = await fetch('/xbox/status');
                 xboxStatus = await response.json();
                 renderXboxStatus();
             } catch (error) {
                 console.error('Error loading Xbox status:', error);
+                const statusElement = document.getElementById('xboxStatus');
+                statusElement.style.display = 'block';
+                document.getElementById('xboxStatusContent').innerHTML = '<div class="error">Error loading Xbox status</div>';
             }
         }
 
@@ -90,18 +91,22 @@
             userListElement.innerHTML = users.map(user => {
                 const tokenInfo = getTokenAgeInfo(user);
 
+                // Check if this user is currently active (in the Xbox status)
+                const isActive = xboxStatus && xboxStatus.users &&
+                    xboxStatus.users.some(activeUser => activeUser.username === user.username);
+
                 return `
-                <div class="user-item">
+                <div class="user-item ${isActive ? 'user-active' : ''}">
                     <div class="user-info">
                         <div class="user-email">${user.username}</div>
-                        <div class="user-gamertag">${user.gamertag || 'Loading...'}</div>
+                        <div class="user-gamertag">${user.gamertag || user.username}</div>
+                        ${isActive ? '<div class="user-activity">🎮 Currently Playing</div>' : ''}
                         <div class="user-token-age" style="font-size: 0.8rem; color: ${tokenInfo.color};">
                             ${tokenInfo.text}
                         </div>
                     </div>
                     <div class="user-status">
                         <div class="status-indicator ${getStatusClass(user.status)}"></div>
-                        <span>${getStatusText(user.status)}</span>
                     </div>
                     <div class="user-actions">
                         <button class="btn btn-success" onclick="refreshUser('${user.username}')">Refresh</button>
@@ -123,7 +128,6 @@
             const now = new Date();
 
             // Estimate initial auth date (tokens typically last 1 hour, so we estimate based on that)
-            // This is an approximation - in a real system, you'd store the initial auth timestamp
             const estimatedAuthAge = Math.floor((now.getTime() - tokenDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
             const daysRemaining = Math.max(0, 90 - estimatedAuthAge);
 
@@ -183,19 +187,19 @@
 
             statusElement.style.display = 'block';
 
-            const status = xboxStatus.xboxStatus;
             const game = xboxStatus.activeGame;
             const users = xboxStatus.users || [];
 
-            let content = `<div class="xbox-status">Xbox is ${status.toUpperCase()}</div>`;
+            // Simplified status display
+            let content = '';
 
-            if (game && status === 'on') {
+            if (game) {
                 content += `
                     <div class="game-info">
                         ${game.coverArtUrl ? `<img src="${game.coverArtUrl}" alt="${game.name}" class="game-cover">` : ''}
                         <div class="game-details">
                             <h3>${game.name}</h3>
-                            <p>${game.activity}</p>
+                            <p>Game ID: ${game.id}</p>
                         </div>
                     </div>
                 `;
@@ -203,10 +207,23 @@
                 if (users.length > 0) {
                     content += `
                         <div class="players-list">
-                            ${users.map(user => `<span class="player-tag">${user.gamertag}</span>`).join('')}
+                            <h4>Active Players:</h4>
+                            ${users.map(user => `
+                                <span class="player-tag">
+                                    <strong>${user.gamertag}</strong>
+                                    <small>(${user.username})</small>
+                                </span>
+                            `).join('')}
                         </div>
                     `;
                 }
+            } else {
+                content = `
+                    <div class="no-activity">
+                        <p>🏠 No active game detected</p>
+                        <p>Xbox console may be on the home screen or turned off</p>
+                    </div>
+                `;
             }
 
             contentElement.innerHTML = content;
@@ -217,14 +234,6 @@
                 case 'authenticated': return 'status-authenticated';
                 case 'expired': return 'status-expired';
                 default: return 'status-error';
-            }
-        }
-
-        function getStatusText(status) {
-            switch (status) {
-                case 'authenticated': return 'Active';
-                case 'expired': return 'Expired';
-                default: return 'Error';
             }
         }
 
@@ -299,11 +308,17 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    messageElement.innerHTML = `<div class="success">✅ Successfully authenticated ${username}!</div>`;
+                    messageElement.innerHTML = `
+                        <div class="success">
+                            ✅ Successfully authenticated ${username}!
+                            <br><small>Gamertag: ${data.gamertag || 'Will be detected shortly'}</small>
+                        </div>
+                    `;
                     document.getElementById('username').value = '';
                     setTimeout(() => {
                         messageElement.innerHTML = '';
                         loadUsers();
+                        loadXboxStatus(); // Refresh Xbox status to show new user
                     }, 3000);
                 } else {
                     messageElement.innerHTML = `<div class="error">Authentication failed: ${data.error}</div>`;
@@ -325,6 +340,7 @@
 
                 if (response.ok) {
                     loadUsers();
+                    loadXboxStatus(); // Refresh Xbox status
                 } else {
                     alert('Error removing user');
                 }
@@ -341,6 +357,7 @@
 
                 if (response.ok) {
                     loadUsers();
+                    loadXboxStatus(); // Refresh Xbox status
                 } else {
                     alert('Error refreshing user tokens');
                 }
@@ -348,23 +365,87 @@
                 alert('Error refreshing user tokens');
             }
         }
-
-        // Manual fallback function
-        async function addUserManual() {
-            const username = document.getElementById('username').value.trim();
-            const messageElement = document.getElementById('addUserMessage');
-
-            if (!username) {
-                messageElement.innerHTML = '<div class="error">Please enter a valid email/username</div>';
-                return;
-            }
-
-            const code = prompt('Please paste the authorization code from the redirect URL:');
-            if (code && code.trim()) {
-                completeAuthentication(username, code.trim());
-            }
-        }
     </script>
+
+    <style>
+        /* Additional styles for the updated interface */
+        .user-active {
+            border-left: 4px solid #28a745;
+            background-color: #f8fff9;
+        }
+
+        .user-activity {
+            color: #28a745;
+            font-weight: bold;
+            font-size: 0.9rem;
+            margin-top: 2px;
+        }
+
+        .game-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .game-cover {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+
+        .game-details h3 {
+            margin: 0;
+            color: #333;
+        }
+
+        .players-list {
+            margin-top: 15px;
+        }
+
+        .players-list h4 {
+            margin: 0 0 10px 0;
+            font-size: 1rem;
+        }
+
+        .player-tag {
+            display: inline-block;
+            background: #007bff;
+            color: white;
+            padding: 5px 10px;
+            margin: 2px;
+            border-radius: 15px;
+            font-size: 0.9rem;
+        }
+
+        .player-tag small {
+            opacity: 0.8;
+        }
+
+        .no-activity {
+            text-align: center;
+            color: #666;
+            padding: 20px;
+        }
+
+        .card-footer {
+            margin-top: 15px;
+            text-align: center;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+            margin: 0 5px;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+    </style>
 </body>
 
 </html>

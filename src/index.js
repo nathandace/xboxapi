@@ -576,210 +576,98 @@ app.get('/xbox/status-all', (req, res) => __awaiter(void 0, void 0, void 0, func
         users: results
     });
 }));
-// Get current games being played and which users are playing them (simplified for Home Assistant)
+let cache = { timestamp: 0, data: null };
 app.get('/xbox/status', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    // Helper function to get token expiration info
-    function getTokenInfo(username) {
-        const tokens = auth.getTokens(username);
-        if (!tokens) {
-            return {
-                hasTokens: false,
-                status: 'no_tokens',
-                daysRemaining: 0
-            };
-        }
-        const now = Date.now();
-        const tokenAge = Math.floor((now - tokens.timestamp) / (1000 * 60 * 60 * 24));
-        const estimatedRefreshDaysLeft = Math.max(0, 90 - tokenAge);
-        const accessTokenExpired = now > tokens.expires_at;
-        let status = 'healthy';
-        if (estimatedRefreshDaysLeft <= 0) {
-            status = 'refresh_expired';
-        }
-        else if (estimatedRefreshDaysLeft <= 7) {
-            status = 'refresh_expiring';
-        }
-        else if (accessTokenExpired) {
-            status = 'access_expired';
-        }
-        return {
-            hasTokens: true,
-            status: status,
-            daysRemaining: estimatedRefreshDaysLeft,
-            tokenAge: tokenAge,
-            accessTokenExpired: accessTokenExpired,
-            accessTokenExpiry: new Date(tokens.expires_at).toISOString(),
-            authTimestamp: new Date(tokens.timestamp).toISOString()
-        };
+    const now = Date.now();
+    // Use cache if recent (10 seconds)
+    if (cache.data && now - cache.timestamp < 10000) {
+        return res.json(cache.data);
     }
     const authenticatedUsers = auth.getAuthenticatedUsers();
     if (authenticatedUsers.length === 0) {
-        return res.json({
+        const response = {
             success: true,
-            xboxStatus: 'unknown',
             activeGame: null,
-            users: [],
-            message: 'No authenticated users'
-        });
+            users: []
+        };
+        cache.data = response;
+        cache.timestamp = now;
+        return res.json(response);
     }
-    // Pre-refresh all tokens if needed before making API calls
+    // Pre-refresh tokens if needed
     for (const username of authenticatedUsers) {
         try {
-            yield getAuthorizationHeader(username); // This will auto-refresh if needed
+            yield getAuthorizationHeader(username);
         }
         catch (error) {
             console.error(`Failed to prepare auth for ${username}:`, error);
         }
     }
     const userPresencePromises = authenticatedUsers.map((username) => __awaiter(void 0, void 0, void 0, function* () {
-        var _a;
         try {
-            // Get fresh authorization header (should be ready now)
             const authorization = auth.getAuthorizationHeader(username);
-            // Get profile and presence
-            const [profileResponse, presenceResponse] = yield Promise.allSettled([
-                axios_1.default.get(`https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,ModernGamertag,ModernGamertagSuffix,UniqueModernGamertag`, {
-                    headers: {
-                        'Authorization': authorization,
-                        'x-xbl-contract-version': '3',
-                        'Accept': 'application/json'
-                    }
-                }),
-                axios_1.default.get(`https://userpresence.xboxlive.com/users/me?level=all`, {
-                    headers: {
-                        'Authorization': authorization,
-                        'x-xbl-contract-version': '3',
-                        'Accept': 'application/json'
-                    }
-                })
-            ]);
-            const userInfo = {
-                username,
-                authenticated: true,
-                gamertag: username
-            };
-            // Extract gamertag
-            if (profileResponse.status === 'fulfilled') {
-                const profileData = profileResponse.value.data;
-                let gamertag = username;
-                if (profileData &&
-                    typeof profileData === 'object' &&
-                    Array.isArray(profileData.profileUsers) &&
-                    profileData.profileUsers[0] &&
-                    Array.isArray(profileData.profileUsers[0].settings)) {
-                    gamertag = ((_a = profileData.profileUsers[0].settings.find((s) => s.id === 'ModernGamertag' || s.id === 'Gamertag')) === null || _a === void 0 ? void 0 : _a.value) || username;
-                }
-                userInfo.gamertag = gamertag;
-            }
-            // Extract current game info and Xbox status
-            if (presenceResponse.status === 'fulfilled') {
-                const presenceData = presenceResponse.value.data;
-                userInfo.state = (presenceData === null || presenceData === void 0 ? void 0 : presenceData.state) || 'Offline';
-                // Check if user is currently on any device
-                const devices = (presenceData === null || presenceData === void 0 ? void 0 : presenceData.devices) || [];
-                for (const device of devices) {
-                    // Mark Xbox as online if user has any Xbox device active (fixed device type)
-                    const isXboxDevice = device.type === 'Scarlett' || device.type === 'XboxOne' || device.type === 'XboxSeriesX' || device.type === 'Xbox360' || device.type === 'XboxSeriesS';
-                    if (isXboxDevice) {
-                        userInfo.xboxDevice = device.type;
-                        userInfo.xboxOnline = true;
-                        // Look for active games (Full placement) or Home screen (Background placement)
-                        const titles = (device === null || device === void 0 ? void 0 : device.titles) || [];
-                        for (const title of titles) {
-                            // Check for active games first (Full placement)
-                            if ((title === null || title === void 0 ? void 0 : title.placement) === 'Full' && (title === null || title === void 0 ? void 0 : title.state) === 'Active') {
-                                userInfo.currentGame = {
+            // Get stored gamertag (no API call needed!)
+            const gamertag = auth.getStoredGamertag(username) || username;
+            // Only get presence data - much faster!
+            const presenceResponse = yield axios_1.default.get(`https://userpresence.xboxlive.com/users/me?level=all`, {
+                headers: {
+                    'Authorization': authorization,
+                    'x-xbl-contract-version': '3',
+                    'Accept': 'application/json'
+                },
+                timeout: 5000
+            });
+            const presenceData = presenceResponse.data;
+            const devices = (presenceData === null || presenceData === void 0 ? void 0 : presenceData.devices) || [];
+            // Find Xbox device with active game
+            for (const device of devices) {
+                const isXboxDevice = device.type === 'Scarlett' || device.type === 'XboxOne' ||
+                    device.type === 'XboxSeriesX' || device.type === 'Xbox360' ||
+                    device.type === 'XboxSeriesS';
+                if (isXboxDevice) {
+                    const titles = (device === null || device === void 0 ? void 0 : device.titles) || [];
+                    // Look for active game (not Home)
+                    for (const title of titles) {
+                        if ((title === null || title === void 0 ? void 0 : title.placement) === 'Full' && (title === null || title === void 0 ? void 0 : title.state) === 'Active' && (title === null || title === void 0 ? void 0 : title.name) !== 'Home') {
+                            return {
+                                username,
+                                gamertag: gamertag, // Use stored gamertag
+                                currentGame: {
                                     id: title.id,
-                                    name: title.name,
-                                    activity: title.activity
-                                };
-                                break;
-                            }
-                        }
-                        // If no active game found, check if user is on Home screen
-                        if (!userInfo.currentGame) {
-                            for (const title of titles) {
-                                if ((title === null || title === void 0 ? void 0 : title.name) === 'Home' && (title === null || title === void 0 ? void 0 : title.state) === 'Active') {
-                                    // User is on Xbox Home screen
-                                    userInfo.onHomeScreen = true;
-                                    break;
+                                    name: title.name
                                 }
-                            }
+                            };
                         }
-                        break; // Found Xbox device, no need to check others
                     }
                 }
             }
-            return userInfo;
+            return null; // No active game found
         }
         catch (error) {
-            return {
-                username,
-                authenticated: false,
-                error: error.message
-            };
+            console.error(`Error getting presence for ${username}:`, error);
+            return null;
         }
     }));
     const userResults = yield Promise.all(userPresencePromises);
-    // Determine Xbox status and active game
-    let xboxStatus = 'off';
+    const activeUsers = userResults.filter(user => user !== null);
     let activeGame = null;
     const usersInGame = [];
-    const allUsers = [];
-    userResults.forEach(user => {
-        if (!user.authenticated) {
-            return;
-        }
-        // Add to all users list
-        allUsers.push({
-            username: user.username,
-            gamertag: user.gamertag,
-            state: user.state,
-            xboxOnline: user.xboxOnline || false,
-            tokenInfo: getTokenInfo(user.username)
+    if (activeUsers.length > 0) {
+        // Use the first active user's game (assuming shared console)
+        const firstUser = activeUsers[0];
+        activeGame = {
+            id: firstUser.currentGame.id,
+            name: firstUser.currentGame.name,
+            coverArtUrl: undefined
+        };
+        // Add all active users to the game
+        activeUsers.forEach(user => {
+            usersInGame.push({
+                username: user.username,
+                gamertag: user.gamertag
+            });
         });
-        // Check if Xbox is online
-        if (user.xboxOnline) {
-            xboxStatus = 'on';
-            // Check if user is playing a game
-            if (user.currentGame) {
-                // Set the active game (assuming all users play the same game in split-screen)
-                if (!activeGame) {
-                    activeGame = {
-                        id: user.currentGame.id,
-                        name: user.currentGame.name,
-                        activity: user.currentGame.activity
-                    };
-                }
-                // Add user to the game
-                usersInGame.push({
-                    username: user.username,
-                    gamertag: user.gamertag,
-                    activity: user.currentGame.activity,
-                    tokenInfo: getTokenInfo(user.username)
-                });
-            }
-        }
-    });
-    // If Xbox is on but no game detected, check if anyone is just on the dashboard
-    if (xboxStatus === 'on' && !activeGame) {
-        const dashboardUsers = allUsers.filter(u => u.xboxOnline);
-        if (dashboardUsers.length > 0) {
-            activeGame = {
-                id: 'dashboard',
-                name: 'Xbox Dashboard',
-                activity: 'On Xbox Home'
-            };
-            usersInGame.push(...dashboardUsers.map(u => ({
-                username: u.username,
-                gamertag: u.gamertag,
-                activity: 'On Xbox Home',
-                tokenInfo: u.tokenInfo
-            })));
-        }
-    }
-    // Get cover art for the active game (if it's not the dashboard)
-    if (activeGame && activeGame.id !== 'dashboard') {
+        // Try to get cover art (with error handling)
         try {
             const coverArtUrl = yield getGameCoverArt(activeGame.name);
             if (coverArtUrl) {
@@ -787,17 +675,24 @@ app.get('/xbox/status', (req, res) => __awaiter(void 0, void 0, void 0, function
             }
         }
         catch (error) {
-            console.error('Error fetching cover art:', error);
+            if (error instanceof Error) {
+                console.error('Cover art service unavailable:', error.message);
+            }
+            else {
+                console.error('Cover art service unavailable:', error);
+            }
+            // Continue without cover art - don't fail the whole request
         }
     }
-    res.json({
+    const response = {
         success: true,
-        xboxStatus: xboxStatus, // 'on', 'off', or 'unknown'
-        activeGame: activeGame, // null if no game/app active, includes coverArtUrl if found
-        users: usersInGame, // users currently in the game/app
-        allUsers: allUsers, // all authenticated users with their token info
-        timestamp: new Date().toISOString()
-    });
+        activeGame: activeGame,
+        users: usersInGame
+    };
+    // Cache the response
+    cache.data = response;
+    cache.timestamp = now;
+    res.json(response);
 }));
 // Get users playing a specific game
 app.get('/xbox/game/:gameId/players', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
