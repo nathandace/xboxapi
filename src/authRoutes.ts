@@ -3,13 +3,12 @@ import * as auth from './auth';
 
 const router = Router();
 
-// Step 1: Initiate Xbox Live authentication using authorization code flow
 router.post('/xbox/:username', (req: Request, res: Response) => {
     const { username } = req.params;
-    
+
     try {
         const { authUrl, state } = auth.getAuthorizationUrl(username);
-        
+
         res.json({
             success: true,
             message: `Authentication initiated for ${username}`,
@@ -33,10 +32,9 @@ router.post('/xbox/:username', (req: Request, res: Response) => {
     }
 });
 
-// Step 2: Handle OAuth callback manually (since redirect won't work in server context)
 router.post('/callback', async (req: Request, res: Response) => {
     const { code, state, error } = req.body;
-    
+
     if (error) {
         return res.status(400).json({
             success: false,
@@ -44,15 +42,14 @@ router.post('/callback', async (req: Request, res: Response) => {
             details: error
         });
     }
-    
+
     if (!code) {
         return res.status(400).json({
             success: false,
             error: 'Missing authorization code'
         });
     }
-    
-    // State validation is optional for convenience
+
     let username = 'default_user';
     if (state) {
         const validatedUsername = auth.validateState(state);
@@ -60,10 +57,10 @@ router.post('/callback', async (req: Request, res: Response) => {
             username = validatedUsername;
         }
     }
-    
+
     try {
         const tokens = await auth.exchangeCodeForTokens(code, username);
-        
+
         res.json({
             success: true,
             message: `Authentication successful for ${username}`,
@@ -71,7 +68,7 @@ router.post('/callback', async (req: Request, res: Response) => {
             userHash: tokens.user_hash,
             tokenExpiry: new Date(tokens.expires_at).toISOString()
         });
-        
+
     } catch (error) {
         console.error('Token exchange error:', error);
         const err = error as any;
@@ -83,11 +80,10 @@ router.post('/callback', async (req: Request, res: Response) => {
     }
 });
 
-// Step 2 Alternative: Simple callback with username in URL
 router.post('/callback/:username', async (req: Request, res: Response) => {
     const { username } = req.params;
     const { code, error } = req.body;
-    
+
     if (error) {
         return res.status(400).json({
             success: false,
@@ -95,17 +91,17 @@ router.post('/callback/:username', async (req: Request, res: Response) => {
             details: error
         });
     }
-    
+
     if (!code) {
         return res.status(400).json({
             success: false,
             error: 'Missing authorization code'
         });
     }
-    
+
     try {
         const tokens = await auth.exchangeCodeForTokens(code, username);
-        
+
         res.json({
             success: true,
             message: `Authentication successful for ${username}`,
@@ -113,7 +109,7 @@ router.post('/callback/:username', async (req: Request, res: Response) => {
             userHash: tokens.user_hash,
             tokenExpiry: new Date(tokens.expires_at).toISOString()
         });
-        
+
     } catch (error) {
         console.error('Token exchange error:', error);
         const err = error as any;
@@ -125,21 +121,20 @@ router.post('/callback/:username', async (req: Request, res: Response) => {
     }
 });
 
-// Alternative: Direct token flow (gets token directly from URL fragment)
 router.post('/token/:username', async (req: Request, res: Response) => {
     const { username } = req.params;
     const { access_token, refresh_token, expires_in } = req.body;
-    
+
     if (!access_token) {
         return res.status(400).json({
             success: false,
             error: 'Missing access_token in request body'
         });
     }
-    
+
     try {
         const tokens = await auth.storeDirectTokens(username, access_token, refresh_token, expires_in);
-        
+
         res.json({
             success: true,
             message: `Direct token authentication successful for ${username}`,
@@ -147,7 +142,7 @@ router.post('/token/:username', async (req: Request, res: Response) => {
             userHash: tokens.user_hash,
             tokenExpiry: new Date(tokens.expires_at).toISOString()
         });
-        
+
     } catch (error) {
         console.error('Direct token authentication error:', error);
         const err = error as any;
@@ -163,7 +158,7 @@ router.post('/token/:username', async (req: Request, res: Response) => {
 router.get('/tokens/:username', (req: Request, res: Response) => {
     const { username } = req.params;
     const tokens = auth.getTokens(username);
-    
+
     if (!tokens) {
         return res.status(404).json({
             success: false,
@@ -171,10 +166,10 @@ router.get('/tokens/:username', (req: Request, res: Response) => {
             message: 'User needs to authenticate first'
         });
     }
-    
+
     // Check if token is expired
     const isExpired = Date.now() > tokens.expires_at;
-    
+
     res.json({
         success: true,
         username: username,
@@ -188,27 +183,27 @@ router.get('/tokens/:username', (req: Request, res: Response) => {
 // Refresh token endpoint
 router.post('/refresh/:username', async (req: Request, res: Response) => {
     const { username } = req.params;
-    
+
     try {
         const updatedTokens = await auth.refreshTokens(username);
-        
+
         res.json({
             success: true,
             message: `Tokens refreshed for ${username}`,
             tokenExpiry: new Date(updatedTokens.expires_at).toISOString()
         });
-        
+
     } catch (error) {
         console.error('Token refresh error:', error);
         const err = error as any;
-        
+
         if (err.message.includes('No refresh token')) {
             return res.status(404).json({
                 success: false,
                 error: err.message
             });
         }
-        
+
         res.status(500).json({
             success: false,
             error: 'Token refresh failed',
@@ -220,11 +215,11 @@ router.post('/refresh/:username', async (req: Request, res: Response) => {
 // Get authorization header for Xbox API calls
 router.get('/header/:username', (req: Request, res: Response) => {
     const { username } = req.params;
-    
+
     try {
         const authorization = auth.getAuthorizationHeader(username);
         const tokens = auth.getTokens(username);
-        
+
         res.json({
             success: true,
             authorization: authorization,
@@ -233,14 +228,14 @@ router.get('/header/:username', (req: Request, res: Response) => {
         });
     } catch (error) {
         const err = error as any;
-        
+
         if (err.message.includes('No tokens')) {
             return res.status(404).json({
                 success: false,
                 error: err.message
             });
         }
-        
+
         if (err.message.includes('Token expired')) {
             return res.status(401).json({
                 success: false,
@@ -248,7 +243,7 @@ router.get('/header/:username', (req: Request, res: Response) => {
                 message: 'Use /auth/refresh/:username to refresh the token'
             });
         }
-        
+
         res.status(500).json({
             success: false,
             error: 'Failed to get authorization header',
@@ -261,7 +256,7 @@ router.get('/header/:username', (req: Request, res: Response) => {
 router.get('/status/:username', (req: Request, res: Response) => {
     const { username } = req.params;
     const tokens = auth.getTokens(username);
-    
+
     if (tokens) {
         const isExpired = Date.now() > tokens.expires_at;
         return res.json({
@@ -273,7 +268,7 @@ router.get('/status/:username', (req: Request, res: Response) => {
             tokenExpiry: new Date(tokens.expires_at).toISOString()
         });
     }
-    
+
     res.json({
         status: 'not_started',
         hasTokens: false,
@@ -284,10 +279,10 @@ router.get('/status/:username', (req: Request, res: Response) => {
 // Helper endpoint to get the authorization URL
 router.get('/url/:username', (req: Request, res: Response) => {
     const { username } = req.params;
-    
+
     try {
         const { authUrl, state } = auth.getAuthorizationUrl(username);
-        
+
         res.json({
             success: true,
             authUrl: authUrl,

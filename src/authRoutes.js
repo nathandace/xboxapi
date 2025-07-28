@@ -45,7 +45,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const auth = __importStar(require("./auth"));
 const router = (0, express_1.Router)();
-// Step 1: Initiate Xbox Live authentication using authorization code flow
 router.post('/xbox/:username', (req, res) => {
     const { username } = req.params;
     try {
@@ -73,7 +72,6 @@ router.post('/xbox/:username', (req, res) => {
         });
     }
 });
-// Step 2: Handle OAuth callback manually (since redirect won't work in server context)
 router.post('/callback', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     const { code, state, error } = req.body;
@@ -90,7 +88,6 @@ router.post('/callback', (req, res) => __awaiter(void 0, void 0, void 0, functio
             error: 'Missing authorization code'
         });
     }
-    // State validation is optional for convenience
     let username = 'default_user';
     if (state) {
         const validatedUsername = auth.validateState(state);
@@ -118,7 +115,6 @@ router.post('/callback', (req, res) => __awaiter(void 0, void 0, void 0, functio
         });
     }
 }));
-// Step 2 Alternative: Simple callback with username in URL
 router.post('/callback/:username', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     const { username } = req.params;
@@ -156,7 +152,6 @@ router.post('/callback/:username', (req, res) => __awaiter(void 0, void 0, void 
         });
     }
 }));
-// Alternative: Direct token flow (gets token directly from URL fragment)
 router.post('/token/:username', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     const { username } = req.params;

@@ -7,31 +7,33 @@ import * as path from 'path';
 
 const app = express();
 app.use(express.json());
-
-// Serve static files for web interface
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Configuration interface
+// Configuration
 interface AppConfig {
     giantBombApiKey?: string;
     enableCoverArt?: boolean;
 }
+interface GiantBombSearchResponse {
+    status_code: number;
+    results?: Array<{
+        image?: {
+            original_url?: string;
+        };
+    }>;
+}
 
-// Load configuration
-let config: AppConfig = {
-    enableCoverArt: false
-};
-
-// Cache for cover art to prevent repeated API calls
+let config: AppConfig = { enableCoverArt: false };
 const coverArtCache = new Map<string, string | null>();
+const cache: { timestamp: number; data: any } = { timestamp: 0, data: null };
 
+// Load configuration on startup
 async function loadConfig(): Promise<void> {
     try {
         const configData = await fs.readFile(path.join(__dirname, 'config.json'), 'utf8');
         const loadedConfig = JSON.parse(configData) as AppConfig;
 
-        // Validate config
-        if (loadedConfig.giantBombApiKey && loadedConfig.giantBombApiKey.trim() !== '') {
+        if (loadedConfig.giantBombApiKey?.trim()) {
             config.giantBombApiKey = loadedConfig.giantBombApiKey.trim();
             config.enableCoverArt = true;
             console.log('Cover art enabled with Giant Bomb API key');
@@ -39,16 +41,114 @@ async function loadConfig(): Promise<void> {
             config.enableCoverArt = false;
             console.log('Cover art disabled - no Giant Bomb API key configured');
         }
-    } catch (error) {
-        console.log('No config.json found or invalid - cover art disabled');
+    } catch {
+        console.log('No config.json found - cover art disabled');
         config.enableCoverArt = false;
     }
 }
 
-// Mount authentication routes
+// Utility functions
+function logError(operation: string, error: any, username?: string): void {
+    const prefix = username ? `[${username}]` : '';
+    console.error(`${prefix} ${operation} error:`, error.response?.data || error.message || error);
+}
+
+function cleanGameName(gameName: string): string {
+    return gameName
+        .replace(/[™®©]/g, '')
+        .replace(/[^\w\s\-:.&]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// Xbox API authentication helpers
+async function getAuthorizationHeader(username: string, forceRefresh: boolean = false): Promise<string> {
+    let tokens = auth.getTokens(username);
+
+    if (!tokens) {
+        throw new Error(`No tokens found for user: ${username}`);
+    }
+
+    if (forceRefresh || Date.now() > tokens.expires_at - 5 * 60 * 1000) {
+        const reason = forceRefresh ? 'forced refresh due to 401' : 'token expired or expiring soon';
+        console.log(`[${username}] ${reason}, attempting refresh...`);
+
+        try {
+            tokens = await auth.refreshTokens(username);
+            console.log(`[${username}] Successfully refreshed tokens`);
+        } catch (error) {
+            logError('Token refresh failed', error, username);
+            throw new Error(`Token expired and refresh failed for ${username}`);
+        }
+    }
+
+    return `XBL3.0 x=${tokens.user_hash};${tokens.xsts_token}`;
+}
+
+async function makeXboxApiCall(username: string, apiCall: (authorization: string) => Promise<any>): Promise<any> {
+    try {
+        const authorization = await getAuthorizationHeader(username);
+        return await apiCall(authorization);
+    } catch (error: any) {
+        if (error.response?.status === 401) {
+            console.log(`[${username}] 401 error, forcing token refresh and retrying...`);
+            try {
+                const freshAuthorization = await getAuthorizationHeader(username, true);
+                return await apiCall(freshAuthorization);
+            } catch (retryError: any) {
+                logError('Retry failed', retryError, username);
+                throw retryError;
+            }
+        }
+        throw error;
+    }
+}
+
+async function getGameCoverArt(gameName: string): Promise<string | null> {
+    if (!config.enableCoverArt || !config.giantBombApiKey) {
+        return null;
+    }
+
+    const cleanedName = cleanGameName(gameName);
+
+    if (coverArtCache.has(cleanedName)) {
+        return coverArtCache.get(cleanedName) || null;
+    }
+
+    try {
+        const response = await axios.get<GiantBombSearchResponse>('https://www.giantbomb.com/api/search/', {
+            params: {
+                api_key: config.giantBombApiKey,
+                format: 'json',
+                query: cleanedName,
+                resources: 'game',
+                limit: 1
+            },
+            headers: { 'User-Agent': 'Xbox-Auth-API/1.0' },
+            timeout: 5000
+        });
+
+        if (response.data?.status_code !== 1) {
+            coverArtCache.set(cleanedName, null);
+            return null;
+        }
+
+        const game = response.data?.results?.[0];
+        const coverUrl = game?.image?.original_url || null;
+
+        coverArtCache.set(cleanedName, coverUrl);
+        return coverUrl;
+    } catch (error) {
+        logError('Cover art fetch failed', error);
+        coverArtCache.set(cleanedName, null);
+        return null;
+    }
+}
+
+// Mount routes
 app.use('/auth', authRoutes);
 
-// Web Interface API Routes
+// User Management API
 app.get('/api/users', async (req: Request, res: Response) => {
     try {
         const authenticatedUsers = auth.getAuthenticatedUsers();
@@ -56,12 +156,8 @@ app.get('/api/users', async (req: Request, res: Response) => {
             try {
                 const tokens = auth.getTokens(username);
                 const isExpired = tokens ? Date.now() > tokens.expires_at : true;
-
-                // Calculate token age for refresh token estimation
                 const tokenAge = tokens ? Math.floor((Date.now() - tokens.timestamp) / (1000 * 60 * 60 * 24)) : 0;
                 const estimatedRefreshDaysLeft = Math.max(0, 90 - tokenAge);
-
-                // Get stored gamertag (no API call needed!)
                 const gamertag = auth.getStoredGamertag(username) || username;
 
                 return {
@@ -69,8 +165,8 @@ app.get('/api/users', async (req: Request, res: Response) => {
                     gamertag,
                     status: isExpired ? 'expired' : 'authenticated',
                     tokenExpiry: tokens ? new Date(tokens.expires_at).toISOString() : null,
-                    tokenAge: tokenAge,
-                    estimatedRefreshDaysLeft: estimatedRefreshDaysLeft,
+                    tokenAge,
+                    estimatedRefreshDaysLeft,
                     authTimestamp: tokens ? new Date(tokens.timestamp).toISOString() : null
                 };
             } catch (error) {
@@ -89,7 +185,7 @@ app.get('/api/users', async (req: Request, res: Response) => {
         const users = await Promise.all(userPromises);
         res.json(users);
     } catch (error) {
-        console.error('Error getting users:', error);
+        logError('Get users failed', error);
         res.status(500).json({ error: 'Failed to get users' });
     }
 });
@@ -105,142 +201,23 @@ app.delete('/api/users/:username', async (req: Request, res: Response) => {
             res.status(404).json({ success: false, error: 'User not found' });
         }
     } catch (error) {
-        console.error('Error removing user:', error);
+        logError('Remove user failed', error, username);
         res.status(500).json({ error: 'Failed to remove user' });
     }
 });
 
-// Xbox Glass API endpoints
-
-// Helper function to get authorization header for a user with auto-refresh
-async function getAuthorizationHeader(username: string): Promise<string> {
-    let tokens = auth.getTokens(username);
-
-    if (!tokens) {
-        throw new Error(`No tokens found for user: ${username}`);
-    }
-
-    // Check if token is expired or expiring within 5 minutes
-    if (Date.now() > tokens.expires_at - 5 * 60 * 1000) {
-        console.log(`Token for ${username} is expired or expiring soon, attempting refresh...`);
-        try {
-            tokens = await auth.refreshTokens(username);
-            console.log(`Successfully refreshed tokens for ${username}`);
-        } catch (error) {
-            console.error(`Failed to refresh tokens for ${username}:`, error);
-            throw new Error(`Token expired and refresh failed for ${username}`);
-        }
-    }
-
-    return `XBL3.0 x=${tokens.user_hash};${tokens.xsts_token}`;
-}
-
-// Helper function to clean game name for search
-function cleanGameName(gameName: string): string {
-    return gameName
-        // Remove trademark symbols
-        .replace(/[™®©]/g, '')
-        // Remove special characters except letters, numbers, spaces, and common punctuation
-        .replace(/[^\w\s\-:.&]/g, '')
-        // Replace multiple spaces with single space
-        .replace(/\s+/g, ' ')
-        // Trim whitespace
-        .trim();
-}
-
-// Helper function to get game cover art from Giant Bomb API
-async function getGameCoverArt(gameName: string): Promise<string | null> {
-
-    if (!config.enableCoverArt || !config.giantBombApiKey) {
-        return null;
-    }
-
-    const cleanedName = cleanGameName(gameName);
-
-    // Check cache first
-    if (coverArtCache.has(cleanedName)) {
-        const cached = coverArtCache.get(cleanedName);
-        console.log(`Using cached cover art result for "${cleanedName}": ${cached ? 'found' : 'not found'}`);
-        return typeof cached === 'undefined' ? null : cached;
-    }
-
-    try {
-        console.log(`Searching for cover art for: "${cleanedName}"`);
-
-        interface GiantBombSearchResult {
-            image?: { original_url?: string };
-            name?: string;
-            [key: string]: any;
-        }
-        interface GiantBombResponse {
-            results?: GiantBombSearchResult[];
-            error?: string;
-            status_code?: number;
-            [key: string]: any;
-        }
-
-        const response = await axios.get<GiantBombResponse>(
-            `https://www.giantbomb.com/api/search/`,
-            {
-                params: {
-                    api_key: config.giantBombApiKey,
-                    format: 'json',
-                    query: cleanedName,
-                    resources: 'game',
-                    limit: 1
-                },
-                headers: {
-                    'User-Agent': 'Xbox-Auth-API/1.0'
-                },
-                timeout: 5000
-            }
-        );
-
-        // Giant Bomb API quirk: "error": "OK" actually means success!
-        if (response.data?.status_code !== 1) {
-            console.warn(`Giant Bomb API failed for "${cleanedName}": status_code=${response.data?.status_code}, error=${response.data?.error}`);
-            coverArtCache.set(cleanedName, null); // Cache the failure
-            return null;
-        }
-
-        const results = response.data?.results;
-        if (results && results.length > 0) {
-            const game = results[0];
-            console.log(`Found game result: "${game.name || 'Unknown'}" for search "${cleanedName}"`);
-
-            if (game.image?.original_url) {
-                console.log(`Found cover art for "${cleanedName}": ${game.image.original_url}`);
-                coverArtCache.set(cleanedName, game.image.original_url); // Cache the success
-                return game.image.original_url;
-            } else {
-                console.log(`Game found but no image available for "${cleanedName}"`);
-                coverArtCache.set(cleanedName, null); // Cache the no-image result
-                return null;
-            }
-        }
-
-        console.log(`No games found for "${cleanedName}"`);
-        coverArtCache.set(cleanedName, null); // Cache the no-results
-        return null;
-
-    } catch (error) {
-        const err = error as any;
-        console.warn(`Error fetching cover art for "${gameName}":`, err.message);
-        coverArtCache.set(cleanedName, null); // Cache the error
-        return null;
-    }
-}
-
-// Get Xbox user profile
+// Individual Xbox API Endpoints
 app.get('/xbox/profile/:username', async (req: Request, res: Response) => {
     const { username } = req.params;
 
     try {
         const authorization = await getAuthorizationHeader(username);
-
         const profileResponse = await axios.get(
-            `https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,Gamerscore,AccountTier,TenureLevel,XboxOneRep,PreferredColor,RealName,Bio,Location,ModernGamertag,ModernGamertagSuffix,UniqueModernGamertag`,
+            'https://profile.xboxlive.com/users/me/profile/settings',
             {
+                params: {
+                    settings: 'Gamertag,Gamerscore,AccountTier,TenureLevel,XboxOneRep,PreferredColor,RealName,Bio,Location,ModernGamertag,ModernGamertagSuffix,UniqueModernGamertag'
+                },
                 headers: {
                     'Authorization': authorization,
                     'x-xbl-contract-version': '3',
@@ -254,14 +231,13 @@ app.get('/xbox/profile/:username', async (req: Request, res: Response) => {
             username,
             profile: profileResponse.data
         });
+    } catch (error: any) {
+        logError('Xbox profile failed', error, username);
 
-    } catch (error) {
-        console.error('Xbox profile error:', error);
-        const err = error as any;
-        if (err.message.includes('No tokens') || err.message.includes('Token expired')) {
+        if (error.message?.includes('No tokens') || error.message?.includes('Token expired')) {
             return res.status(401).json({
                 success: false,
-                error: err.message,
+                error: error.message,
                 action: 'Please authenticate or refresh tokens'
             });
         }
@@ -269,20 +245,18 @@ app.get('/xbox/profile/:username', async (req: Request, res: Response) => {
         res.status(500).json({
             success: false,
             error: 'Failed to get Xbox profile',
-            details: err.response?.data || err.message
+            details: error.response?.data || error.message
         });
     }
 });
 
-// Get Xbox user presence (online status)
 app.get('/xbox/presence/:username', async (req: Request, res: Response) => {
     const { username } = req.params;
 
     try {
         const authorization = await getAuthorizationHeader(username);
-
         const presenceResponse = await axios.get(
-            `https://userpresence.xboxlive.com/users/me?level=all`,
+            'https://userpresence.xboxlive.com/users/me?level=all',
             {
                 headers: {
                     'Authorization': authorization,
@@ -297,14 +271,13 @@ app.get('/xbox/presence/:username', async (req: Request, res: Response) => {
             username,
             presence: presenceResponse.data
         });
+    } catch (error: any) {
+        logError('Xbox presence failed', error, username);
 
-    } catch (error) {
-        console.error('Xbox presence error:', error);
-        const err = error as any;
-        if (err.message.includes('No tokens') || err.message.includes('Token expired')) {
+        if (error.message?.includes('No tokens') || error.message?.includes('Token expired')) {
             return res.status(401).json({
                 success: false,
-                error: err.message,
+                error: error.message,
                 action: 'Please authenticate or refresh tokens'
             });
         }
@@ -312,20 +285,18 @@ app.get('/xbox/presence/:username', async (req: Request, res: Response) => {
         res.status(500).json({
             success: false,
             error: 'Failed to get Xbox presence',
-            details: err.response?.data || err.message
+            details: error.response?.data || error.message
         });
     }
 });
 
-// Get Xbox friends list
 app.get('/xbox/friends/:username', async (req: Request, res: Response) => {
     const { username } = req.params;
 
     try {
         const authorization = await getAuthorizationHeader(username);
-
         const friendsResponse = await axios.get(
-            `https://social.xboxlive.com/users/me/people`,
+            'https://social.xboxlive.com/users/me/people',
             {
                 headers: {
                     'Authorization': authorization,
@@ -340,14 +311,13 @@ app.get('/xbox/friends/:username', async (req: Request, res: Response) => {
             username,
             friends: friendsResponse.data
         });
+    } catch (error: any) {
+        logError('Xbox friends failed', error, username);
 
-    } catch (error) {
-        console.error('Xbox friends error:', error);
-        const err = error as any;
-        if (err.message.includes('No tokens') || err.message.includes('Token expired')) {
+        if (error.message?.includes('No tokens') || error.message?.includes('Token expired')) {
             return res.status(401).json({
                 success: false,
-                error: err.message,
+                error: error.message,
                 action: 'Please authenticate or refresh tokens'
             });
         }
@@ -355,18 +325,16 @@ app.get('/xbox/friends/:username', async (req: Request, res: Response) => {
         res.status(500).json({
             success: false,
             error: 'Failed to get Xbox friends',
-            details: err.response?.data || err.message
+            details: error.response?.data || error.message
         });
     }
 });
 
-// Get Xbox achievements for a specific title
 app.get('/xbox/achievements/:username/:titleId', async (req: Request, res: Response) => {
     const { username, titleId } = req.params;
 
     try {
         const authorization = await getAuthorizationHeader(username);
-
         const achievementsResponse = await axios.get(
             `https://achievements.xboxlive.com/users/me/achievements?titleId=${titleId}&maxItems=1000`,
             {
@@ -384,14 +352,13 @@ app.get('/xbox/achievements/:username/:titleId', async (req: Request, res: Respo
             titleId,
             achievements: achievementsResponse.data
         });
+    } catch (error: any) {
+        logError('Xbox achievements failed', error, username);
 
-    } catch (error) {
-        console.error('Xbox achievements error:', error);
-        const err = error as any;
-        if (err.message.includes('No tokens') || err.message.includes('Token expired')) {
+        if (error.message?.includes('No tokens') || error.message?.includes('Token expired')) {
             return res.status(401).json({
                 success: false,
-                error: err.message,
+                error: error.message,
                 action: 'Please authenticate or refresh tokens'
             });
         }
@@ -399,20 +366,18 @@ app.get('/xbox/achievements/:username/:titleId', async (req: Request, res: Respo
         res.status(500).json({
             success: false,
             error: 'Failed to get Xbox achievements',
-            details: err.response?.data || err.message
+            details: error.response?.data || error.message
         });
     }
 });
 
-// Get Xbox recent games
 app.get('/xbox/games/:username', async (req: Request, res: Response) => {
     const { username } = req.params;
 
     try {
         const authorization = await getAuthorizationHeader(username);
-
         const gamesResponse = await axios.get(
-            `https://titlehub.xboxlive.com/users/me/titles/titlehistory/decoration/detail`,
+            'https://titlehub.xboxlive.com/users/me/titles/titlehistory/decoration/detail',
             {
                 headers: {
                     'Authorization': authorization,
@@ -427,14 +392,13 @@ app.get('/xbox/games/:username', async (req: Request, res: Response) => {
             username,
             games: gamesResponse.data
         });
+    } catch (error: any) {
+        logError('Xbox games failed', error, username);
 
-    } catch (error) {
-        console.error('Xbox games error:', error);
-        const err = error as any;
-        if (err.message.includes('No tokens') || err.message.includes('Token expired')) {
+        if (error.message?.includes('No tokens') || error.message?.includes('Token expired')) {
             return res.status(401).json({
                 success: false,
-                error: err.message,
+                error: error.message,
                 action: 'Please authenticate or refresh tokens'
             });
         }
@@ -442,22 +406,34 @@ app.get('/xbox/games/:username', async (req: Request, res: Response) => {
         res.status(500).json({
             success: false,
             error: 'Failed to get Xbox games',
-            details: err.response?.data || err.message
+            details: error.response?.data || error.message
         });
     }
 });
 
-// Get comprehensive Xbox status for a user (profile + presence + recent games)
+// Aggregate Xbox API Endpoints
 app.get('/xbox/status/:username', async (req: Request, res: Response) => {
     const { username } = req.params;
 
     try {
         const authorization = await getAuthorizationHeader(username);
 
-        // Make multiple requests in parallel
         const [profileResponse, presenceResponse, gamesResponse] = await Promise.allSettled([
             axios.get(
-                `https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,Gamerscore,AccountTier,TenureLevel,XboxOneRep,PreferredColor,ModernGamertag,ModernGamertagSuffix,UniqueModernGamertag`,
+                'https://profile.xboxlive.com/users/me/profile/settings',
+                {
+                    params: {
+                        settings: 'Gamertag,Gamerscore,AccountTier,TenureLevel,XboxOneRep,PreferredColor,ModernGamertag,ModernGamertagSuffix,UniqueModernGamertag'
+                    },
+                    headers: {
+                        'Authorization': authorization,
+                        'x-xbl-contract-version': '3',
+                        'Accept': 'application/json'
+                    }
+                }
+            ),
+            axios.get(
+                'https://userpresence.xboxlive.com/users/me?level=all',
                 {
                     headers: {
                         'Authorization': authorization,
@@ -467,17 +443,7 @@ app.get('/xbox/status/:username', async (req: Request, res: Response) => {
                 }
             ),
             axios.get(
-                `https://userpresence.xboxlive.com/users/me?level=all`,
-                {
-                    headers: {
-                        'Authorization': authorization,
-                        'x-xbl-contract-version': '3',
-                        'Accept': 'application/json'
-                    }
-                }
-            ),
-            axios.get(
-                `https://titlehub.xboxlive.com/users/me/titles/titlehistory/decoration/detail`,
+                'https://titlehub.xboxlive.com/users/me/titles/titlehistory/decoration/detail',
                 {
                     headers: {
                         'Authorization': authorization,
@@ -513,14 +479,13 @@ app.get('/xbox/status/:username', async (req: Request, res: Response) => {
         }
 
         res.json(result);
+    } catch (error: any) {
+        logError('Xbox status failed', error, username);
 
-    } catch (error) {
-        console.error('Xbox status error:', error);
-        const err = error as any;
-        if (err.message.includes('No tokens') || err.message.includes('Token expired')) {
+        if (error.message?.includes('No tokens') || error.message?.includes('Token expired')) {
             return res.status(401).json({
                 success: false,
-                error: err.message,
+                error: error.message,
                 action: 'Please authenticate or refresh tokens'
             });
         }
@@ -528,12 +493,11 @@ app.get('/xbox/status/:username', async (req: Request, res: Response) => {
         res.status(500).json({
             success: false,
             error: 'Failed to get Xbox status',
-            details: err.message
+            details: error.message
         });
     }
 });
 
-// Get bulk status for all authenticated users
 app.get('/xbox/status-all', async (req: Request, res: Response) => {
     const authenticatedUsers = auth.getAuthenticatedUsers();
 
@@ -549,11 +513,13 @@ app.get('/xbox/status-all', async (req: Request, res: Response) => {
         try {
             const authorization = await getAuthorizationHeader(username);
 
-            // Get basic profile and presence for each user
             const [profileResponse, presenceResponse] = await Promise.allSettled([
                 axios.get(
-                    `https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,ModernGamertag,ModernGamertagSuffix,UniqueModernGamertag`,
+                    'https://profile.xboxlive.com/users/me/profile/settings',
                     {
+                        params: {
+                            settings: 'Gamertag,ModernGamertag,ModernGamertagSuffix,UniqueModernGamertag'
+                        },
                         headers: {
                             'Authorization': authorization,
                             'x-xbl-contract-version': '3',
@@ -562,7 +528,7 @@ app.get('/xbox/status-all', async (req: Request, res: Response) => {
                     }
                 ),
                 axios.get(
-                    `https://userpresence.xboxlive.com/users/me?level=all`,
+                    'https://userpresence.xboxlive.com/users/me?level=all',
                     {
                         headers: {
                             'Authorization': authorization,
@@ -587,7 +553,6 @@ app.get('/xbox/status-all', async (req: Request, res: Response) => {
             }
 
             return userStatus;
-
         } catch (error) {
             return {
                 username,
@@ -607,13 +572,10 @@ app.get('/xbox/status-all', async (req: Request, res: Response) => {
     });
 });
 
-let cache: { timestamp: number; data: any } = { timestamp: 0, data: null };
-
+// Primary Multi-Profile Xbox Status Endpoint (for Home Assistant)
 app.get('/xbox/status', async (req: Request, res: Response) => {
-
     const now = Date.now();
 
-    // Use cache if recent (10 seconds)
     if (cache.data && now - cache.timestamp < 10000) {
         return res.json(cache.data);
     }
@@ -621,11 +583,7 @@ app.get('/xbox/status', async (req: Request, res: Response) => {
     const authenticatedUsers = auth.getAuthenticatedUsers();
 
     if (authenticatedUsers.length === 0) {
-        const response = {
-            success: true,
-            activeGame: null,
-            users: []
-        };
+        const response = { success: true, activeGame: null, users: [] };
         cache.data = response;
         cache.timestamp = now;
         return res.json(response);
@@ -636,52 +594,42 @@ app.get('/xbox/status', async (req: Request, res: Response) => {
         try {
             await getAuthorizationHeader(username);
         } catch (error) {
-            console.error(`Failed to prepare auth for ${username}:`, error);
+            logError('Failed to prepare auth', error, username);
         }
     }
 
     const userPresencePromises = authenticatedUsers.map(async (username) => {
         try {
-            const authorization = auth.getAuthorizationHeader(username);
-
-            // Get stored gamertag (no API call needed!)
             const gamertag = auth.getStoredGamertag(username) || username;
 
-            // Only get presence data - much faster!
-            const presenceResponse = await axios.get(
-                `https://userpresence.xboxlive.com/users/me?level=all`,
-                {
-                    headers: {
-                        'Authorization': authorization,
-                        'x-xbl-contract-version': '3',
-                        'Accept': 'application/json'
-                    },
-                    timeout: 5000
-                }
-            );
-
-            const presenceData = presenceResponse.data as { state?: string; devices?: any[] };
-
-            // Add debug logging to see what's happening after Xbox restart
-            console.log(`Raw presence data for ${username}:`, JSON.stringify(presenceData, null, 2));
+            const presenceData = await makeXboxApiCall(username, async (authorization) => {
+                const response = await axios.get(
+                    'https://userpresence.xboxlive.com/users/me?level=all',
+                    {
+                        headers: {
+                            'Authorization': authorization,
+                            'x-xbl-contract-version': '3',
+                            'Accept': 'application/json'
+                        },
+                        timeout: 5000
+                    }
+                );
+                return response.data;
+            });
 
             const devices = presenceData?.devices || [];
 
-            // Find Xbox device with active game
             for (const device of devices) {
-                const isXboxDevice = device.type === 'Scarlett' || device.type === 'XboxOne' ||
-                    device.type === 'XboxSeriesX' || device.type === 'Xbox360' ||
-                    device.type === 'XboxSeriesS';
+                const isXboxDevice = ['Scarlett', 'XboxOne', 'XboxSeriesX', 'Xbox360', 'XboxSeriesS'].includes(device.type);
 
                 if (isXboxDevice) {
                     const titles = device?.titles || [];
 
-                    // Look for active game (not Home)
                     for (const title of titles) {
                         if (title?.placement === 'Full' && title?.state === 'Active' && title?.name !== 'Home') {
                             return {
                                 username,
-                                gamertag: gamertag, // Use stored gamertag
+                                gamertag,
                                 currentGame: {
                                     id: title.id,
                                     name: title.name
@@ -692,9 +640,9 @@ app.get('/xbox/status', async (req: Request, res: Response) => {
                 }
             }
 
-            return null; // No active game found
+            return null;
         } catch (error) {
-            console.error(`Error getting presence for ${username}:`, error);
+            logError('Get presence failed', error, username);
             return null;
         }
     });
@@ -706,15 +654,12 @@ app.get('/xbox/status', async (req: Request, res: Response) => {
     const usersInGame: { username: string; gamertag: string }[] = [];
 
     if (activeUsers.length > 0) {
-        // Use the first active user's game (assuming shared console)
         const firstUser = activeUsers[0];
         activeGame = {
             id: firstUser.currentGame.id,
-            name: firstUser.currentGame.name,
-            coverArtUrl: undefined
+            name: firstUser.currentGame.name
         };
 
-        // Add all active users to the game
         activeUsers.forEach(user => {
             usersInGame.push({
                 username: user.username,
@@ -722,36 +667,28 @@ app.get('/xbox/status', async (req: Request, res: Response) => {
             });
         });
 
-        // Try to get cover art (with error handling)
         try {
             const coverArtUrl = await getGameCoverArt(activeGame.name);
             if (coverArtUrl) {
                 activeGame.coverArtUrl = coverArtUrl;
             }
         } catch (error) {
-            if (error instanceof Error) {
-                console.error('Cover art service unavailable:', error.message);
-            } else {
-                console.error('Cover art service unavailable:', error);
-            }
-            // Continue without cover art - don't fail the whole request
+            logError('Cover art fetch failed', error);
         }
     }
 
     const response = {
         success: true,
-        activeGame: activeGame,
+        activeGame,
         users: usersInGame
     };
 
-    // Cache the response
     cache.data = response;
     cache.timestamp = now;
 
     res.json(response);
 });
 
-// Get users playing a specific game
 app.get('/xbox/game/:gameId/players', async (req: Request, res: Response) => {
     const { gameId } = req.params;
     const authenticatedUsers = auth.getAuthenticatedUsers();
@@ -760,7 +697,7 @@ app.get('/xbox/game/:gameId/players', async (req: Request, res: Response) => {
         return res.json({
             success: true,
             message: 'No authenticated users',
-            gameId: gameId,
+            gameId,
             players: []
         });
     }
@@ -768,12 +705,10 @@ app.get('/xbox/game/:gameId/players', async (req: Request, res: Response) => {
     const userPresencePromises = authenticatedUsers.map(async (username) => {
         try {
             const authorization = await getAuthorizationHeader(username);
-
-            // Use stored gamertag instead of profile API call
             const gamertag = auth.getStoredGamertag(username) || username;
 
             const presenceResponse = await axios.get(
-                `https://userpresence.xboxlive.com/users/me?level=all`,
+                'https://userpresence.xboxlive.com/users/me?level=all',
                 {
                     headers: {
                         'Authorization': authorization,
@@ -802,8 +737,7 @@ app.get('/xbox/game/:gameId/players', async (req: Request, res: Response) => {
                 }
             }
 
-            return null; // User not playing this game
-
+            return null;
         } catch (error) {
             return null;
         }
@@ -814,7 +748,7 @@ app.get('/xbox/game/:gameId/players', async (req: Request, res: Response) => {
 
     res.json({
         success: true,
-        gameId: gameId,
+        gameId,
         gameName: playersInGame.length > 0 ? playersInGame[0].gameName : 'Unknown Game',
         playerCount: playersInGame.length,
         players: playersInGame,
@@ -822,7 +756,7 @@ app.get('/xbox/game/:gameId/players', async (req: Request, res: Response) => {
     });
 });
 
-// Health check
+// System endpoints
 app.get('/health', (req: Request, res: Response) => {
     const stats = auth.getAuthStats();
 
@@ -831,42 +765,33 @@ app.get('/health', (req: Request, res: Response) => {
         message: 'Xbox Authentication API is running',
         clientId: '000000004C12AE6F',
         authenticatedUsers: auth.getAuthenticatedUsers(),
-        stats: stats,
+        stats,
         timestamp: new Date().toISOString()
     });
 });
 
-// Load existing tokens and config on startup
+// Server initialization
 async function initializeServer() {
     await loadConfig();
     await auth.loadTokens();
 }
 
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, async () => {
     console.log(`Xbox Authentication API running on port ${PORT}`);
-    console.log(`\nUsing Xbox Live client ID: 000000004C12AE6F`);
-    console.log(`No Azure registration needed!`);
+    console.log('Using Xbox Live client ID: 000000004C12AE6F');
 
-    // Initialize server configuration
     await initializeServer();
 
     console.log(`\n🌐 Web Interface: http://localhost:${PORT}`);
     console.log(`📊 Health Check: http://localhost:${PORT}/health`);
-
-    console.log(`\nTo authenticate users:`);
-    console.log(`1. Open http://localhost:${PORT} in your browser`);
-    console.log(`2. Click "Add User" and enter email/username`);
-    console.log(`3. Complete Xbox Live sign-in in the popup window`);
-
-    console.log(`\nAPI Endpoints:`);
-    console.log(`GET http://localhost:${PORT}/xbox/status - See XBox status and active games`);
-    console.log(`GET http://localhost:${PORT}/xbox/profile/{username} - Get user profile`);
+    console.log(`🎮 Xbox Status: http://localhost:${PORT}/xbox/status`);
 
     if (config.enableCoverArt) {
-        console.log(`\n🎨 Cover art enabled via Giant Bomb API`);
+        console.log('\n🎨 Cover art enabled via Giant Bomb API');
     } else {
-        console.log(`\n📝 Cover art disabled - add Giant Bomb API key to config.json to enable`);
+        console.log('\n📝 Cover art disabled - add Giant Bomb API key to config.json to enable');
     }
 });
 
