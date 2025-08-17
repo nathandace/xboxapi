@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xbox API Manager (.NET)</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎮 Xbox API Manager</h1>
+            <p>Manage Xbox Live authentication and monitor gaming activity</p>
+        </div>
+
+        <div id="xboxStatus" class="card xbox-status-card" style="display: none;">
+            <h2>🎮 Current Xbox Status</h2>
+            <div id="xboxStatusContent"></div>
+        </div>
+
+        <div class="main-content">
+            <div class="left-column">
+                <div class="card">
+                    <h2>👤 Add New User</h2>
+                    <div class="add-user-form">
+                        <div class="form-group">
+                            <label for="username">Microsoft Email:</label>
+                            <input type="email" id="username" placeholder="user@outlook.com or user@gmail.com" required>
+                        </div>
+                        <button class="btn btn-primary" onclick="addUser()">🔑 Add User</button>
+                    </div>
+                    <div id="addUserMessage"></div>
+                </div>
+
+                <div class="card">
+                    <h2>⚙️ Cover Art Settings</h2>
+                    <div class="config-section">
+                        <div class="form-group">
+                            <label for="giantBombApiKey">Giant Bomb API Key (optional):</label>
+                            <input type="text" id="giantBombApiKey" placeholder="Enter API key for game cover art">
+                            <small>Get your free API key from <a href="https://www.giantbomb.com/api/" target="_blank">Giant Bomb API</a></small>
+                        </div>
+                        <div class="form-group">
+                            <button class="btn btn-primary" onclick="saveConfig()" style="margin-bottom: 10px;">💾 Save Settings</button>
+                            <span id="coverArtStatus" class="status-text"></span>
+                        </div>
+                    </div>
+                    <div id="configMessage"></div>
+                </div>
+            </div>
+
+            <div class="right-column">
+                <div class="card">
+                    <h2>👥 Authenticated Users</h2>
+                    <div id="userList" class="user-list">
+                        <div class="loading">Loading users...</div>
+                    </div>
+                    <div class="card-footer">
+                        <button class="btn btn-secondary" onclick="loadUsers()">🔄 Refresh Users</button>
+                        <button class="btn btn-secondary" onclick="loadXboxStatus()">🎮 Refresh Xbox Status</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>
+                <a href="https://github.com/nathandace/xboxapi" target="_blank">
+                    <svg class="github-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                        <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+                    </svg>
+                    Xbox API on GitHub
+                </a>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        let users = [];
+        let xboxStatus = null;
+        let currentAuthState = null; // Store the state for authentication
+
+        // Load users and Xbox status on page load
+        document.addEventListener('DOMContentLoaded', function () {
+            loadUsers();
+            loadXboxStatus();
+            loadConfig();
+            
+        });
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/api/users');
+                users = await response.json();
+                renderUsers();
+            } catch (error) {
+                console.error('Error loading users:', error);
+                document.getElementById('userList').innerHTML = '<div class="error">Error loading users</div>';
+            }
+        }
+
+        async function loadXboxStatus() {
+            try {
+                const response = await fetch('/xbox/status');
+                xboxStatus = await response.json();
+                renderXboxStatus();
+            } catch (error) {
+                console.error('Error loading Xbox status:', error);
+                const statusElement = document.getElementById('xboxStatus');
+                statusElement.style.display = 'block';
+                document.getElementById('xboxStatusContent').innerHTML = '<div class="error">Error loading Xbox status</div>';
+            }
+        }
+
+        function renderUsers() {
+            const userListElement = document.getElementById('userList');
+
+            if (users.length === 0) {
+                userListElement.innerHTML = '<div class="loading">No users authenticated yet</div>';
+                return;
+            }
+
+            userListElement.innerHTML = users.map(user => {
+                const tokenInfo = getTokenAgeInfo(user);
+
+                // Check if this user is currently active (in the Xbox status)
+                const isActive = xboxStatus && xboxStatus.users &&
+                    xboxStatus.users.some(activeUser => activeUser.username === user.username);
+
+                return `
+                <div class="user-item ${isActive ? 'user-active' : ''}">
+                    <div class="user-info">
+                        <div class="user-email">${user.username}</div>
+                        <div class="user-gamertag">${user.gamertag || user.username}</div>
+                        ${isActive ? '<div class="user-activity">🎮 Currently Playing</div>' : ''}
+                        <div class="user-token-age" style="font-size: 0.8rem; color: ${tokenInfo.color};">
+                            ${tokenInfo.text}
+                        </div>
+                    </div>
+                    <div class="user-status">
+                        <div class="status-indicator ${getStatusClass(user.status)}"></div>
+                    </div>
+                    <div class="user-actions">
+                        <button class="btn btn-success" onclick="refreshUser('${user.username}')">Refresh</button>
+                        <button class="btn btn-danger" onclick="removeUser('${user.username}')">Remove</button>
+                        ${tokenInfo.needsReauth ? `<button class="btn" style="background: #ffc107; color: #000; margin-left: 5px;" onclick="reAuthenticateUser('${user.username}')">Re-auth</button>` : ''}
+                    </div>
+                </div>
+            `;
+            }).join('');
+        }
+
+        function getTokenAgeInfo(user) {
+            if (!user.tokenExpiry) {
+                return { text: 'Token info unavailable', color: '#666', needsReauth: false };
+            }
+
+            const tokenDate = new Date(user.tokenExpiry);
+            const now = new Date();
+            const estimatedAuthAge = user.tokenAge || 0;
+            const daysRemaining = user.estimatedRefreshDaysLeft || 0;
+
+            if (daysRemaining <= 0) {
+                return {
+                    text: 'Token expired - needs re-auth',
+                    color: '#dc3545',
+                    needsReauth: true
+                };
+            } else if (daysRemaining <= 7) {
+                return {
+                    text: `⚠️ ${daysRemaining} days remaining`,
+                    color: '#ffc107',
+                    needsReauth: true
+                };
+            } else if (daysRemaining <= 14) {
+                return {
+                    text: `${daysRemaining} days remaining`,
+                    color: '#fd7e14',
+                    needsReauth: false
+                };
+            } else {
+                return {
+                    text: `${daysRemaining} days remaining`,
+                    color: '#28a745',
+                    needsReauth: false
+                };
+            }
+        }
+
+        async function reAuthenticateUser(username) {
+            document.getElementById('username').value = username;
+            
+            try {
+                await fetch(`/api/users/${encodeURIComponent(username)}`, {
+                    method: 'DELETE'
+                });
+                loadUsers();
+            } catch (error) {
+                console.error('Error removing user:', error);
+            }
+
+            setTimeout(() => addUser(), 500);
+        }
+
+        function renderXboxStatus() {
+            const statusElement = document.getElementById('xboxStatus');
+            const contentElement = document.getElementById('xboxStatusContent');
+
+            if (!xboxStatus || !xboxStatus.success) {
+                statusElement.style.display = 'none';
+                return;
+            }
+
+            statusElement.style.display = 'block';
+
+            const game = xboxStatus.activeGame;
+            const users = xboxStatus.users || [];
+
+            let content = '';
+
+            if (game) {
+                console.log('Game data:', game);
+                console.log('Cover art URL:', game.coverArtUrl);
+                content += `
+                    <div class="game-info-expanded">
+                        <div class="cover-art-container">
+                            ${game.coverArtUrl ? 
+                                `<img src="${game.coverArtUrl}" alt="${game.name}" class="game-cover-large">` : 
+                                '<div class="no-cover-placeholder">🎮</div>'}
+                        </div>
+                        <div class="game-details-expanded">
+                            <h3 class="game-title">${game.name}</h3>
+                            <div class="game-metadata">
+                                <div class="metadata-item">
+                                    <span class="metadata-label">Game ID:</span>
+                                    <span class="metadata-value">${game.id}</span>
+                                </div>
+                                <div class="metadata-item">
+                                    <span class="metadata-label">Status:</span>
+                                    <span class="metadata-value status-active">🟢 Currently Playing</span>
+                                </div>
+                                ${game.deviceType ? `
+                                <div class="metadata-item">
+                                    <span class="metadata-label">Console:</span>
+                                    <span class="metadata-value">${formatDeviceType(game.deviceType)}</span>
+                                </div>
+                                ` : ''}
+                                ${game.richPresence ? `
+                                <div class="metadata-item">
+                                    <span class="metadata-label">Activity:</span>
+                                    <span class="metadata-value">${game.richPresence}</span>
+                                </div>
+                                ` : ''}
+                            </div>
+                            <div class="active-players-section">
+                                <h4>Active Players</h4>
+                                <div class="players-grid">
+                                    ${users.map(user => `
+                                        <div class="player-card">
+                                            <div class="player-icon">👤</div>
+                                            <div class="player-info">
+                                                <div class="player-gamertag">${user.gamertag}</div>
+                                                <div class="player-username">${user.username}</div>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                content = `
+                    <div class="no-activity">
+                        <p>🏠 No active game detected</p>
+                        <p>Xbox console may be on the home screen or turned off</p>
+                    </div>
+                `;
+            }
+
+            contentElement.innerHTML = content;
+        }
+
+        function getStatusClass(status) {
+            switch (status) {
+                case 'authenticated': return 'status-authenticated';
+                case 'expired': return 'status-expired';
+                default: return 'status-error';
+            }
+        }
+
+        function formatDeviceType(deviceType) {
+            const deviceNames = {
+                'Scarlett': 'Xbox Series X/S',
+                'XboxOne': 'Xbox One',
+                'XboxSeriesX': 'Xbox Series X',
+                'XboxSeriesS': 'Xbox Series S',
+                'Xbox360': 'Xbox 360'
+            };
+            return deviceNames[deviceType] || deviceType;
+        }
+
+        let authWindow = null; // Store reference to the auth window
+
+        async function addUser() {
+            const username = document.getElementById('username').value.trim();
+            const messageElement = document.getElementById('addUserMessage');
+
+            if (!username) {
+                messageElement.innerHTML = '<div class="error">Please enter your Microsoft email address</div>';
+                return;
+            }
+
+            try {
+                messageElement.innerHTML = '<div class="loading">Initiating authentication...</div>';
+
+                const response = await fetch(`/auth/url?username=${encodeURIComponent(username)}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    // Extract state from the auth URL
+                    const url = new URL(data.data);
+                    currentAuthState = url.searchParams.get('state');
+                    
+                    authWindow = window.open(data.data, 'xboxauth', 'width=500,height=600,scrollbars=yes,resizable=yes');
+
+                    messageElement.innerHTML = `
+                        <div class="success">
+                            <p>🚀 Authentication window opened!</p>
+                            <p>Please sign in with <strong>${username}</strong> in the popup window.</p>
+                            <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;">
+                                <h4 style="margin: 0 0 10px 0; color: #495057;">Complete Authentication:</h4>
+                                <p style="margin: 0 0 10px 0; font-size: 0.9rem;">After signing in, copy the <strong>entire URL</strong> from the popup's address bar and paste it below:</p>
+                                <input type="text" id="authCode" placeholder="Paste the complete redirect URL here (starts with https://login.live.com/oauth20_desktop.srf?code=...)" style="width: 100%; padding: 10px; margin-bottom: 10px; border: 2px solid #ced4da; border-radius: 6px; font-family: monospace; font-size: 0.85rem;">
+                                <button class="btn btn-primary" onclick="submitAuthCode('${username}')">✅ Complete Authentication</button>
+                            </div>
+                        </div>
+                    `;
+
+                    // Monitor if the popup gets closed manually
+                    const checkClosed = setInterval(() => {
+                        if (authWindow && authWindow.closed) {
+                            clearInterval(checkClosed);
+                            if (messageElement.innerHTML.includes('Authentication window opened')) {
+                                messageElement.innerHTML = '<div class="error">Authentication window was closed. Please try again.</div>';
+                            }
+                        }
+                    }, 1000);
+
+                } else {
+                    messageElement.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                messageElement.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+
+        async function submitAuthCode(username) {
+            const input = document.getElementById('authCode').value.trim();
+            const messageElement = document.getElementById('addUserMessage');
+
+            if (!input) {
+                messageElement.innerHTML += '<div class="error" style="margin-top: 10px;">Please paste the redirect URL from the popup window</div>';
+                return;
+            }
+
+            // Extract code from either full URL or just the code parameter
+            let code = input;
+            let state = null;
+            
+            try {
+                // Check if input looks like a URL
+                if (input.includes('http') && input.includes('code=')) {
+                    const url = new URL(input);
+                    const extractedCode = url.searchParams.get('code');
+                    const extractedState = url.searchParams.get('state');
+                    if (extractedCode) {
+                        code = extractedCode;
+                        state = extractedState;
+                    }
+                } else if (input.includes('code=')) {
+                    // Handle case where they pasted the query string part
+                    const queryString = input.includes('?') ? input.split('?')[1] : input;
+                    const params = new URLSearchParams(queryString);
+                    const extractedCode = params.get('code');
+                    const extractedState = params.get('state');
+                    if (extractedCode) {
+                        code = extractedCode;
+                        state = extractedState;
+                    }
+                }
+            } catch (error) {
+                console.log('URL parsing failed, assuming direct code input');
+            }
+
+            // Verify state matches if we extracted it
+            if (state && state !== currentAuthState) {
+                messageElement.innerHTML += '<div class="error" style="margin-top: 10px;">Invalid authentication state. Please try again.</div>';
+                return;
+            }
+
+            // Close the auth window if it's still open
+            if (authWindow) {
+                authWindow.close();
+                authWindow = null;
+            }
+
+            completeAuthentication(code);
+        }
+
+        async function completeAuthentication(code) {
+            const messageElement = document.getElementById('addUserMessage');
+
+            try {
+                messageElement.innerHTML = '<div class="loading">Completing authentication...</div>';
+
+                if (!currentAuthState) {
+                    messageElement.innerHTML = '<div class="error">Authentication state lost. Please try again.</div>';
+                    return;
+                }
+
+                const response = await fetch(`/auth/callback?code=${encodeURIComponent(code)}&state=${currentAuthState}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    const username = data.data?.Username || 'User';
+                    messageElement.innerHTML = `
+                        <div class="success">
+                            ✅ Successfully authenticated ${username}!
+                            <br><small>Gamertag: ${data.data?.Gamertag || 'Will be detected shortly'}</small>
+                        </div>
+                    `;
+                    document.getElementById('username').value = '';
+                    setTimeout(() => {
+                        messageElement.innerHTML = '';
+                        loadUsers();
+                        loadXboxStatus();
+                    }, 3000);
+                } else {
+                    messageElement.innerHTML = `<div class="error">Authentication failed: ${data.error}</div>`;
+                }
+            } catch (error) {
+                messageElement.innerHTML = `<div class="error">Error completing authentication: ${error.message}</div>`;
+            }
+        }
+
+        async function removeUser(username) {
+            if (!confirm(`Are you sure you want to remove ${username}?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/users/${encodeURIComponent(username)}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    loadUsers();
+                    loadXboxStatus();
+                } else {
+                    alert('Error removing user');
+                }
+            } catch (error) {
+                alert('Error removing user');
+            }
+        }
+
+        async function refreshUser(username) {
+            try {
+                const response = await fetch(`/auth/refresh?username=${encodeURIComponent(username)}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    loadUsers();
+                    loadXboxStatus();
+                } else {
+                    alert('Error refreshing user tokens');
+                }
+            } catch (error) {
+                alert('Error refreshing user tokens');
+            }
+        }
+
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const data = await response.json();
+                
+                if (data.success && data.data) {
+                    const apiKey = data.data.giantBombApiKey || '';
+                    document.getElementById('giantBombApiKey').value = apiKey;
+                    
+                    const statusElement = document.getElementById('coverArtStatus');
+                    if (data.data.enableCoverArt) {
+                        statusElement.textContent = '✅ Cover art enabled';
+                        statusElement.style.color = '#28a745';
+                    } else {
+                        statusElement.textContent = '❌ Cover art disabled';
+                        statusElement.style.color = '#6c757d';
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading config:', error);
+            }
+        }
+
+        async function saveConfig() {
+            try {
+                const apiKey = document.getElementById('giantBombApiKey').value.trim();
+                const messageElement = document.getElementById('configMessage');
+                
+                messageElement.innerHTML = '<div class="loading">Saving configuration...</div>';
+                
+                const response = await fetch('/api/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        giantBombApiKey: apiKey || null
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    messageElement.innerHTML = '<div class="success">✅ Configuration saved successfully!</div>';
+                    
+                    // Update status
+                    const statusElement = document.getElementById('coverArtStatus');
+                    if (data.data.enableCoverArt) {
+                        statusElement.textContent = '✅ Cover art enabled';
+                        statusElement.style.color = '#28a745';
+                    } else {
+                        statusElement.textContent = '❌ Cover art disabled';
+                        statusElement.style.color = '#6c757d';
+                    }
+                    
+                    setTimeout(() => {
+                        messageElement.innerHTML = '';
+                    }, 3000);
+                } else {
+                    messageElement.innerHTML = `<div class="error">❌ Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                console.error('Error saving config:', error);
+                document.getElementById('configMessage').innerHTML = '<div class="error">❌ Error saving configuration</div>';
+            }
+        }
+    </script>
+
+</body>
+
+</html>

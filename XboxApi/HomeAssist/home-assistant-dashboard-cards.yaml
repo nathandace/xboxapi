@@ -1,0 +1,241 @@
+# Xbox API (.NET) Home Assistant Dashboard Card Examples
+# Copy these card configurations into your Lovelace dashboard YAML
+# 
+# These examples work with the .NET Xbox API sensors defined in home-assistant-rest-config.yaml
+
+# Simple Xbox Status Card
+xbox_simple_card:
+  type: vertical-stack
+  cards:
+    # Current Game
+    - type: entity
+      entity: sensor.xbox_active_game
+      name: Current Game
+      icon: mdi:gamepad-variant
+
+    # Active Players
+    - type: entity
+      entity: sensor.xbox_active_players
+      name: Active Players
+      icon: mdi:account-multiple
+
+    # Cover Art
+    - type: markdown
+      title: Game Cover
+      content: |
+        {% set cover_state = states('sensor.xbox_cover_art') %}
+        {% if cover_state == 'long_url' %}
+          ![Game Cover]({{ state_attr('sensor.xbox_cover_art', 'coverArtUrl') }})
+        {% elif cover_state != 'none' and cover_state != 'unavailable' %}
+          ![Game Cover]({{ cover_state }})
+        {% else %}
+          No cover art available
+        {% endif %}
+
+# Advanced Xbox Card with Cover Art Background
+xbox_advanced_card:
+  type: conditional
+  conditions:
+    - entity: sensor.xbox_active_game
+      state_not: "None"
+    - entity: sensor.xbox_active_game
+      state_not: "unavailable"
+  card:
+    type: picture-elements
+    image: >-
+      {% set cover_state = states('sensor.xbox_cover_art') %}
+      {% if cover_state == 'long_url' %}
+        {{ state_attr('sensor.xbox_cover_art', 'coverArtUrl') }}
+      {% elif cover_state != 'none' and cover_state != 'unavailable' %}
+        {{ cover_state }}
+      {% else %}
+        /local/xbox-placeholder.png
+      {% endif %}
+    elements:
+      - type: state-label
+        entity: sensor.xbox_active_game
+        style:
+          top: 90%
+          left: 50%
+          color: white
+          font-size: 16px
+          font-weight: bold
+          text-shadow: 2px 2px 4px rgba(0,0,0,0.8)
+      - type: state-label
+        entity: sensor.xbox_active_players
+        prefix: "👥 "
+        style:
+          top: 10%
+          right: 10%
+          color: white
+          font-size: 12px
+          font-weight: bold
+          text-shadow: 2px 2px 4px rgba(0,0,0,0.8)
+
+# API Health Monitoring Card
+xbox_health_card:
+  type: entities
+  title: Xbox API Health (.NET)
+  entities:
+    - entity: sensor.xbox_api_health_dotnet
+      name: API Status
+      icon: mdi:heart-pulse
+    - type: attribute
+      entity: sensor.xbox_api_health_dotnet
+      attribute: stats.totalUsers
+      name: Total Users
+      icon: mdi:account-group
+    - type: attribute
+      entity: sensor.xbox_api_health_dotnet
+      attribute: stats.validTokens
+      name: Valid Tokens
+      icon: mdi:key-variant
+    - type: divider
+    - entity: sensor.xbox_active_game
+      name: Current Game
+      icon: mdi:gamepad-variant
+    - entity: sensor.xbox_active_players
+      name: Active Players
+      icon: mdi:account-multiple
+
+# Compact Gaming Status Card
+xbox_compact_card:
+  type: glance
+  title: Xbox Gaming Status
+  entities:
+    - entity: sensor.xbox_active_game
+      name: Game
+      icon: mdi:gamepad-variant
+    - entity: sensor.xbox_active_players
+      name: Players
+      icon: mdi:account-multiple
+    - entity: sensor.xbox_api_health_dotnet
+      name: API
+      icon: mdi:heart-pulse
+
+# Gaming Dashboard with Cover Art
+xbox_gaming_dashboard:
+  type: vertical-stack
+  cards:
+    # Main gaming card with cover art
+    - type: conditional
+      conditions:
+        - entity: sensor.xbox_active_game
+          state_not: "None"
+        - entity: sensor.xbox_active_game
+          state_not: "unavailable"
+      card:
+        type: picture-glance
+        title: "🎮 Now Playing"
+        image: >-
+          {% set cover_state = states('sensor.xbox_cover_art') %}
+          {% if cover_state == 'long_url' %}
+            {{ state_attr('sensor.xbox_cover_art', 'coverArtUrl') }}
+          {% elif cover_state != 'none' and cover_state != 'unavailable' %}
+            {{ cover_state }}
+          {% else %}
+            /local/xbox-placeholder.png
+          {% endif %}
+        entities:
+          - entity: sensor.xbox_active_game
+            name: Game
+          - entity: sensor.xbox_active_players
+            name: Players
+
+    # Fallback card when no game is active
+    - type: conditional
+      conditions:
+        - entity: sensor.xbox_active_game
+          state: "None"
+      card:
+        type: markdown
+        content: |
+          ## 🏠 Xbox Console
+          No game currently active
+          
+          **Status:** Home Screen
+    
+    # Status indicators
+    - type: horizontal-stack
+      cards:
+        - type: entity
+          entity: sensor.xbox_api_health_dotnet
+          name: API Status
+          icon: mdi:heart-pulse
+        - type: entity
+          entity: sensor.xbox_active_players
+          name: Players Online
+          icon: mdi:account-multiple
+
+# Minimal Status Badge
+xbox_minimal_badge:
+  type: entity
+  entity: sensor.xbox_active_game
+  name: Xbox
+  icon: mdi:microsoft-xbox
+  state_color: true
+
+# Complete Xbox Dashboard (use this as a starting point)
+xbox_complete_dashboard:
+  type: vertical-stack
+  title: "🎮 Xbox Gaming Center"
+  cards:
+    # Main status
+    - type: conditional
+      conditions:
+        - entity: sensor.xbox_active_game
+          state_not: "None"
+        - entity: sensor.xbox_active_game
+          state_not: "unavailable"
+      card:
+        type: picture-elements
+        image: >-
+          {% set cover_state = states('sensor.xbox_cover_art') %}
+          {% if cover_state == 'long_url' %}
+            {{ state_attr('sensor.xbox_cover_art', 'coverArtUrl') }}
+          {% elif cover_state != 'none' and cover_state != 'unavailable' %}
+            {{ cover_state }}
+          {% else %}
+            /local/xbox-placeholder.png
+          {% endif %}
+        elements:
+          - type: state-label
+            entity: sensor.xbox_active_game
+            style:
+              top: 90%
+              left: 50%
+              color: white
+              font-size: 18px
+              font-weight: bold
+              text-shadow: 2px 2px 4px rgba(0,0,0,0.8)
+              transform: translate(-50%, -50%)
+          - type: state-label
+            entity: sensor.xbox_active_players
+            prefix: "👥 "
+            style:
+              top: 10%
+              right: 10%
+              color: white
+              font-size: 14px
+              font-weight: bold
+              text-shadow: 2px 2px 4px rgba(0,0,0,0.8)
+    
+    # No game fallback
+    - type: conditional
+      conditions:
+        - entity: sensor.xbox_active_game
+          state: "None"
+      card:
+        type: picture
+        image: /local/xbox-home.png  # Add your own Xbox home image
+        title: Xbox Console - Home Screen
+    
+    # Quick stats
+    - type: glance
+      entities:
+        - entity: sensor.xbox_active_game
+          name: Current Game
+        - entity: sensor.xbox_active_players  
+          name: Players
+        - entity: sensor.xbox_api_health_dotnet
+          name: API Health

@@ -1,0 +1,125 @@
+# Xbox API (.NET) Home Assistant REST Sensor Configuration
+# Add this configuration to your Home Assistant configuration.yaml file
+# 
+# IMPORTANT: Update the IP address and port to match your .NET API deployment
+# Default: http://localhost:5000 (development) or http://your-pi-ip:5000 (production)
+
+rest:
+  # Main Xbox status endpoint for gaming data
+  - resource: "http://localhost:5000/xbox/status"
+    scan_interval: 60
+    method: GET
+    timeout: 45  # Increased timeout for reliability
+    verify_ssl: false  # Set to true if using HTTPS
+    sensor:
+      # Xbox Active Game with error handling
+      - name: "Xbox Active Game"
+        unique_id: xbox_active_game_dotnet
+        value_template: >
+          {% if value_json is defined and value_json.success %}
+            {% if value_json.activeGame and value_json.activeGame.name %}
+              {{ value_json.activeGame.name }}
+            {% else %}
+              None
+            {% endif %}
+          {% else %}
+            unavailable
+          {% endif %}
+        json_attributes_path: "$"
+        json_attributes:
+          - "activeGame"
+          - "users"
+        icon: "mdi:gamepad-variant"
+        
+      # Xbox Active Players with error handling
+      - name: "Xbox Active Players"
+        unique_id: xbox_active_players_dotnet
+        value_template: >
+          {% if value_json is defined and value_json.success %}
+            {% if value_json.users and value_json.users | length > 0 %}
+              {{ value_json.users | map(attribute='gamertag') | join(', ') }}
+            {% else %}
+              No players
+            {% endif %}
+          {% else %}
+            unavailable
+          {% endif %}
+        icon: "mdi:account-multiple"
+        
+      # Xbox Cover Art with error handling
+      - name: "Xbox Cover Art"
+        unique_id: xbox_cover_art_dotnet
+        value_template: >
+          {% if value_json is defined and value_json.success %}
+            {% if value_json.activeGame and value_json.activeGame.coverArtUrl %}
+              {% set url = value_json.activeGame.coverArtUrl %}
+              {% if url | length < 250 %}
+                {{ url }}
+              {% else %}
+                long_url
+              {% endif %}
+            {% else %}
+              none
+            {% endif %}
+          {% else %}
+            unavailable
+          {% endif %}
+        json_attributes_path: "$.activeGame"
+        json_attributes:
+          - "coverArtUrl"
+        icon: "mdi:image"
+
+  # API health monitoring endpoint  
+  - resource: "http://localhost:5000/health"
+    scan_interval: 300  # Check every 5 minutes
+    method: GET
+    timeout: 30
+    sensor:
+      - name: "Xbox API Health (.NET)"
+        unique_id: xbox_api_health_dotnet
+        value_template: >
+          {% if value_json is defined and value_json.success is defined %}
+            {% if value_json.success and value_json.ready %}
+              Healthy
+            {% elif value_json.success %}
+              Starting
+            {% else %}
+              Error
+            {% endif %}
+          {% else %}
+            unavailable
+          {% endif %}
+        json_attributes_path: "$"
+        json_attributes:
+          - "stats"
+          - "authenticatedUsers"
+          - "clientId"
+          - "ready"
+        icon: "mdi:heart-pulse"
+
+# Optional: Individual user status endpoints
+# Uncomment and customize these if you want per-user monitoring
+# Replace 'username@example.com' with actual usernames from your tokens.json
+#
+#  - resource: "http://localhost:5000/xbox/user/username@example.com/status"
+#    scan_interval: 120
+#    method: GET
+#    timeout: 30
+#    sensor:
+#      - name: "Xbox User Status"
+#        unique_id: xbox_user_status_dotnet
+#        value_template: >
+#          {% if value_json is defined and value_json.presence %}
+#            {% if value_json.presence.state == "Online" %}
+#              Online
+#            {% else %}
+#              Offline
+#            {% endif %}
+#          {% else %}
+#            unavailable
+#          {% endif %}
+#        json_attributes_path: "$"
+#        json_attributes:
+#          - "profile"
+#          - "presence"
+#        icon: "mdi:account"
