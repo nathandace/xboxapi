@@ -22,7 +22,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddMemoryCache(options =>
 {
-    options.ExpirationScanFrequency = TimeSpan.FromMinutes(1); // Clean expired cache entries regularly
+    options.ExpirationScanFrequency = TimeSpan.FromMinutes(1);
 });
 
 builder.Services.AddSingleton<IXboxAuthService, XboxAuthService>();
@@ -38,9 +38,9 @@ builder.Services.AddHttpClient("XboxAuthClient", client =>
 
 builder.Services.AddHttpClient<IXboxApiService, XboxApiService>(client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(40); // Increased to be under HA's 45s timeout
+    client.Timeout = TimeSpan.FromSeconds(40);
     client.DefaultRequestHeaders.Add("User-Agent", "Xbox-API-NET/1.0");
-    client.DefaultRequestHeaders.Add("Connection", "close"); // Prevent connection reuse issues
+    client.DefaultRequestHeaders.Add("Connection", "close");
 })
 .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
@@ -48,7 +48,7 @@ builder.Services.AddHttpClient<IXboxApiService, XboxApiService>(client =>
     UseProxy = false,
     AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
 })
-.SetHandlerLifetime(TimeSpan.FromMinutes(5)) // Rotate connections to prevent stale state
+.SetHandlerLifetime(TimeSpan.FromMinutes(5))
 .AddStandardResilienceHandler();
 
 builder.Services.AddHttpClient<IConfigService, ConfigService>(client =>
