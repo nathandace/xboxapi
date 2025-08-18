@@ -220,7 +220,7 @@
 
             let content = '';
 
-            if (game) {
+            if (game && game.id !== 'none' && game.name !== 'No Game') {
                 console.log('Game data:', game);
                 console.log('Cover art URL:', game.coverArtUrl);
                 content += `

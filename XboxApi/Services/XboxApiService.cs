@@ -181,7 +181,20 @@ public class XboxApiService : IXboxApiService
         var users = await _authService.GetAuthenticatedUsersAsync();
         if (!users.Any())
         {
-            var emptyResponse = new XboxStatusResponse();
+            var emptyResponse = new XboxStatusResponse
+            {
+                Success = true,
+                ActiveGame = new ActiveGame
+                {
+                    Id = "none",
+                    Name = "No Game",
+                    CoverArtUrl = null,
+                    DeviceType = "none",
+                    RichPresence = null
+                },
+                Users = new List<UserInGame>(),
+                Timestamp = DateTime.UtcNow
+            };
             _cache.Set(cacheKey, emptyResponse, TimeSpan.FromSeconds(CacheExpirationSeconds));
             return emptyResponse;
         }
@@ -205,7 +218,11 @@ public class XboxApiService : IXboxApiService
         var userResults = await Task.WhenAll(userPresenceTasks);
         var activeUsers = userResults.Where(u => u != null).ToList();
 
-        var response = new XboxStatusResponse();
+        var response = new XboxStatusResponse
+        {
+            Success = true,
+            Timestamp = DateTime.UtcNow
+        };
         
         if (activeUsers.Any())
         {
@@ -237,6 +254,19 @@ public class XboxApiService : IXboxApiService
             {
                 _logger.LogError(ex, "Failed to get cover art for game: {GameName}", response.ActiveGame.Name);
             }
+        }
+        else
+        {
+            // No active game - provide a consistent structure for Home Assistant
+            response.ActiveGame = new ActiveGame
+            {
+                Id = "none",
+                Name = "No Game",
+                CoverArtUrl = null,
+                DeviceType = "none",
+                RichPresence = null
+            };
+            response.Users = new List<UserInGame>();
         }
 
         _cache.Set(cacheKey, response, TimeSpan.FromSeconds(CacheExpirationSeconds));

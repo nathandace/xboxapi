@@ -37,9 +37,13 @@ xbox_advanced_card:
   type: conditional
   conditions:
     - entity: sensor.xbox_active_game
+      state_not: "No Game"
+    - entity: sensor.xbox_active_game
       state_not: "None"
     - entity: sensor.xbox_active_game
       state_not: "unavailable"
+    - entity: sensor.xbox_active_game
+      state_not: "Error"
   card:
     type: picture-elements
     image: >-
@@ -77,16 +81,16 @@ xbox_health_card:
   type: entities
   title: Xbox API Health (.NET)
   entities:
-    - entity: sensor.xbox_api_health_dotnet
+    - entity: sensor.xbox_api_health
       name: API Status
       icon: mdi:heart-pulse
     - type: attribute
-      entity: sensor.xbox_api_health_dotnet
+      entity: sensor.xbox_api_health
       attribute: stats.totalUsers
       name: Total Users
       icon: mdi:account-group
     - type: attribute
-      entity: sensor.xbox_api_health_dotnet
+      entity: sensor.xbox_api_health
       attribute: stats.validTokens
       name: Valid Tokens
       icon: mdi:key-variant
@@ -109,7 +113,7 @@ xbox_compact_card:
     - entity: sensor.xbox_active_players
       name: Players
       icon: mdi:account-multiple
-    - entity: sensor.xbox_api_health_dotnet
+    - entity: sensor.xbox_api_health
       name: API
       icon: mdi:heart-pulse
 
@@ -121,9 +125,13 @@ xbox_gaming_dashboard:
     - type: conditional
       conditions:
         - entity: sensor.xbox_active_game
+          state_not: "No Game"
+        - entity: sensor.xbox_active_game
           state_not: "None"
         - entity: sensor.xbox_active_game
           state_not: "unavailable"
+        - entity: sensor.xbox_active_game
+          state_not: "Error"
       card:
         type: picture-glance
         title: "🎮 Now Playing"
@@ -145,8 +153,14 @@ xbox_gaming_dashboard:
     # Fallback card when no game is active
     - type: conditional
       conditions:
-        - entity: sensor.xbox_active_game
-          state: "None"
+        - condition: or
+          conditions:
+            - entity: sensor.xbox_active_game
+              state: "No Game"
+            - entity: sensor.xbox_active_game
+              state: "None"
+            - entity: sensor.xbox_active_game
+              state: "Error"
       card:
         type: markdown
         content: |
@@ -159,7 +173,7 @@ xbox_gaming_dashboard:
     - type: horizontal-stack
       cards:
         - type: entity
-          entity: sensor.xbox_api_health_dotnet
+          entity: sensor.xbox_api_health
           name: API Status
           icon: mdi:heart-pulse
         - type: entity
@@ -184,9 +198,13 @@ xbox_complete_dashboard:
     - type: conditional
       conditions:
         - entity: sensor.xbox_active_game
+          state_not: "No Game"
+        - entity: sensor.xbox_active_game
           state_not: "None"
         - entity: sensor.xbox_active_game
           state_not: "unavailable"
+        - entity: sensor.xbox_active_game
+          state_not: "Error"
       card:
         type: picture-elements
         image: >-
@@ -223,8 +241,14 @@ xbox_complete_dashboard:
     # No game fallback
     - type: conditional
       conditions:
-        - entity: sensor.xbox_active_game
-          state: "None"
+        - condition: or
+          conditions:
+            - entity: sensor.xbox_active_game
+              state: "No Game"
+            - entity: sensor.xbox_active_game
+              state: "None"
+            - entity: sensor.xbox_active_game
+              state: "Error"
       card:
         type: picture
         image: /local/xbox-home.png  # Add your own Xbox home image
@@ -237,5 +261,5 @@ xbox_complete_dashboard:
           name: Current Game
         - entity: sensor.xbox_active_players  
           name: Players
-        - entity: sensor.xbox_api_health_dotnet
+        - entity: sensor.xbox_api_health
           name: API Health

@@ -7,14 +7,16 @@
 rest:
   # Main Xbox status endpoint for gaming data
   - resource: "http://localhost:5000/xbox/status"
-    scan_interval: 60
+    scan_interval: 90  # Increased to reduce load and allow cache to work
     method: GET
     timeout: 45  # Increased timeout for reliability
     verify_ssl: false  # Set to true if using HTTPS
+    headers:
+      Connection: "close"  # Prevent connection pooling issues
     sensor:
       # Xbox Active Game with error handling
       - name: "Xbox Active Game"
-        unique_id: xbox_active_game_dotnet
+        unique_id: xbox_active_game
         value_template: >
           {% if value_json is defined and value_json.success %}
             {% if value_json.activeGame and value_json.activeGame.name %}
@@ -33,7 +35,7 @@ rest:
         
       # Xbox Active Players with error handling
       - name: "Xbox Active Players"
-        unique_id: xbox_active_players_dotnet
+        unique_id: xbox_active_players
         value_template: >
           {% if value_json is defined and value_json.success %}
             {% if value_json.users and value_json.users | length > 0 %}
@@ -48,7 +50,7 @@ rest:
         
       # Xbox Cover Art with error handling
       - name: "Xbox Cover Art"
-        unique_id: xbox_cover_art_dotnet
+        unique_id: xbox_cover_art
         value_template: >
           {% if value_json is defined and value_json.success %}
             {% if value_json.activeGame and value_json.activeGame.coverArtUrl %}
@@ -75,8 +77,8 @@ rest:
     method: GET
     timeout: 30
     sensor:
-      - name: "Xbox API Health (.NET)"
-        unique_id: xbox_api_health_dotnet
+      - name: "Xbox API Health"
+        unique_id: xbox_api_health
         value_template: >
           {% if value_json is defined and value_json.success is defined %}
             {% if value_json.success and value_json.ready %}
